@@ -1,8 +1,8 @@
 """
-PDFファイルをMarkdown形式に変換するモジュール（Claude利用）
+PDFファイルをMarkdown形式に変換するモジュール（Claude 3.7 Sonnet利用）
 
-このモジュールは、PDFファイルをClaudeのAI機能を使用してMarkdown形式に変換します。
-入力フォルダ内のすべてのPDFファイルを処理し、結果を出力フォルダに保存します。
+このモジュールは、PDFファイルをClaude 3.7 SonnetのAI機能を使用してMarkdown形式に変換します。
+指定されたPDFファイルを処理し、結果を出力ファイルに保存します。
 
 制限事項:
 - Claudeの入出力トークン制限に依存します
@@ -10,6 +10,7 @@ PDFファイルをMarkdown形式に変換するモジュール（Claude利用）
 """
 
 import os
+import sys
 import base64
 from pathlib import Path
 from dotenv import load_dotenv
@@ -19,8 +20,8 @@ import anthropic
 # 環境変数の読み込み
 load_dotenv()
 
-MODEL_NAME = "claude-3-5-sonnet-20241022"
-MODEL_NAME_FOR_OUTPUT = "claude-3-5-sonnet"
+MODEL_NAME = "claude-3-7-sonnet-20240307"
+MODEL_NAME_FOR_OUTPUT = "claude-3-7-sonnet"
 API_TOKEN = os.getenv("CLAUDE_API_KEY", "sk-xxx")
 SYSTEM_PROMPT = "このPDFの内容を余すことなくmarkdown形式に変換してください。また、内容はまとめないでオリジナルの内容をそのまま複写することを意識してください。出力はmarkdown形式のみ、不要な出力はしないでください。"
 
@@ -43,7 +44,7 @@ def pdf2md(pdf_filepath: str):
     client = anthropic.Anthropic(api_key=API_TOKEN)
     # アップロードしたPDFをmarkdown形式に変換するようLLMに指示
     response = client.beta.messages.create(
-        model="claude-3-5-sonnet-20241022",
+        model=MODEL_NAME,
         betas=["pdfs-2024-09-25"],
         max_tokens=4000,
         messages=[
@@ -96,25 +97,35 @@ def list_files_in_folder(folder_path: str) -> list[str]:
 
 
 if __name__ == "__main__":
-    # 入出力ディレクトリの確認と作成
-    Path("./src/input").mkdir(parents=True, exist_ok=True)
-    Path("./src/output").mkdir(parents=True, exist_ok=True)
+    # コマンドライン引数の確認
+    if len(sys.argv) < 2:
+        print("使用方法: python pdf2md_claude.py <input_pdf_path> [output_md_path]")
+        sys.exit(1)
     
-    # 入力フォルダのPDFファイルを処理
-    pdf_files = [f for f in list_files_in_folder("./src/input") if f.lower().endswith('.pdf')]
+    input_pdf_path = sys.argv[1]
     
-    if not pdf_files:
-        print("処理対象のPDFファイルが見つかりません。src/inputディレクトリにPDFファイルを配置してください。")
-        exit(0)
+    # 出力ファイルパス（省略可能）
+    if len(sys.argv) >= 3:
+        output_md_path = sys.argv[2]
+    else:
+        # デフォルトの出力パスを設定
+        output_dir = "./src/output"
+        Path(output_dir).mkdir(parents=True, exist_ok=True)
+        output_basename = os.path.basename(input_pdf_path).replace(".pdf", ".md")
+        output_md_path = f"{output_dir}/{MODEL_NAME_FOR_OUTPUT}_{output_basename}"
     
-    for pdf_file in pdf_files:
-        print(f"処理ファイル: {pdf_file}")
-        # pdfをmarkdownに変換
-        md_content = pdf2md(f"./src/input/{pdf_file}")
-
-        # 出力されたmarkdownを.md形式の新規ファイルに書き込む
-        output_file = pdf_file.replace(".pdf", ".md")
-        with open(f"./src/output/{MODEL_NAME_FOR_OUTPUT}_{output_file}", "w", encoding="utf-8") as f:
-           f.write(md_content)
-        
-        print(f"変換完了: {output_file}") 
+    print(f"処理ファイル: {os.path.basename(input_pdf_path)}")
+    
+    # pdfをmarkdownに変換
+    md_content = pdf2md(input_pdf_path)
+    
+    # 出力ディレクトリを作成（必要な場合）
+    output_dir = os.path.dirname(output_md_path)
+    if output_dir:
+        Path(output_dir).mkdir(parents=True, exist_ok=True)
+    
+    # 出力されたmarkdownを.md形式の新規ファイルに書き込む
+    with open(output_md_path, "w", encoding="utf-8") as f:
+        f.write(md_content)
+    
+    print(f"変換完了: {output_md_path}") 
