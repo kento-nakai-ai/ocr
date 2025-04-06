@@ -18,7 +18,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # プロジェクトのルートディレクトリを設定
 ROOT_DIR="$SCRIPT_DIR"
 # スクリプトディレクトリを設定
-SCRIPTS_DIR="$ROOT_DIR/scripts"
+SCRIPTS_DIR="$ROOT_DIR/src"
 # データディレクトリを設定
 DATA_DIR="$ROOT_DIR/data"
 # ソースディレクトリを設定

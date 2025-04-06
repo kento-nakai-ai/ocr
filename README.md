@@ -18,7 +18,7 @@
    - `pdf_to_images.py`などでPopplerを用いてPDFから画像（PNG/JPEG）を生成
 2. **OCR処理**  
    - **ローカルOCR（Tesseract）**  
-   - **LLMベースOCR（Gemini, Claude, GPT-4など）**  
+   - **LLMベースOCR（Gemini 2.5 Pro, Claude 3.7 Sonnet, GPT-4など）**  
 3. **Markdown変換（ocr_to_markdown.py）**  
    - テキストをKaTeX数式や適切な画像タグに整形
 4. **PostgreSQL/Auroraにインポート（markdown_importer.py）**  
@@ -43,14 +43,14 @@
   - 日本語モデル（`jpn.traineddata`）
 
 ### LLMベースOCR・画像解析（選択的に使用）
-- Gemini API（Googleの次世代マルチモーダルモデルを想定）
-- Claude API（Anthropic）
+- Gemini 2.5 Pro API（Googleの最新マルチモーダルモデル）
+- Claude 3.7 Sonnet API（Anthropic）
 - OpenAI API（GPT-4等）
 
 ### Pythonパッケージ例
 
 ```bash
-pip install pdf2image psycopg2-binary python-dotenv anthropic
+pip install pdf2image psycopg2-binary python-dotenv anthropic PyPDF2 google-generativeai
 # LLM使用例:
 # pip install openai  # GPT-4等
 # pip install google-cloud-aiplatform  # 例: Vertex AI使用時など
@@ -156,12 +156,16 @@ OPENAI_API_KEY=your_openai_api_key
 .
 ├── README.md                     # このファイル
 ├── run_pipeline.sh               # ワークフロー実行スクリプト
+├── extract_sample.sh             # サンプルページ抽出スクリプト
 ├── .env                          # 環境変数設定ファイル（要作成）
-├── scripts/                      # 各種Pythonスクリプト
+├── src/                          # 各種Pythonスクリプト
 │   ├── pdf_to_images.py               # [1] PDF→画像変換
 │   ├── ocr_engine.py                  # [2] OCR処理 (Tesseract/LLM)
 │   ├── ocr_to_markdown.py             # [3] テキスト→Markdown変換
 │   ├── markdown_importer.py           # [4] Markdown→DBインポート
+│   ├── pdf2md_claude.py               # Claude 3.7 Sonnetを使ったPDF→Markdown変換
+│   ├── pdf2md_gemini.py               # Gemini 2.5 Proを使ったPDF→Markdown変換
+│   ├── extract_sample_pages.py        # PDFからサンプルページを抽出するスクリプト
 │   ├── gemini_image_analyzer.py       # [5] Geminiなどでマルチモーダル解析
 │   ├── embed_importer.py              # [6] Embedding情報をDB格納
 │   └── ...
@@ -206,16 +210,31 @@ OPENAI_API_KEY=your_openai_api_key
 
 - 上記でステップ[1]～[4]が一括実行されます（OCRはデフォルトでTesseract）
 
-### 2. マルチモーダル解析・Embeddingインポート
+### 2. サンプルページの抽出と処理
+
+```bash
+./extract_sample.sh path/to/your/document.pdf --use-llm [--claude|--gemini]
+```
+
+- PDFファイルからサンプルとして10ページを抽出してOCR処理を行います
+- 主なオプション:
+  - `--pages NUM`: 抽出するページ数（デフォルト：10）
+  - `--use-llm`: OCRにLLMベースの処理を使用する（必須）
+  - `--claude`: 画像解析にClaude 3.7 Sonnet APIを使用する
+  - `--gemini`: 画像解析にGemini 2.5 Pro APIを使用する（デフォルト）
+  - `--dpi NUM`: 画像変換時のDPI値（デフォルト：300）
+  - `--format FORMAT`: 画像フォーマット（png/jpeg、デフォルト：png）
+
+### 3. マルチモーダル解析・Embeddingインポート
 
 ```bash
 # Gemini/ClaudeなどのAPIを使って画像解析＆ベクトル取得
-python scripts/gemini_image_analyzer.py --input images/ --output embedding/
+python src/gemini_image_analyzer.py --input images/ --output embedding/
 # 得られたembeddingをDBに登録
-python scripts/embed_importer.py --input embedding/ --table embeddings
+python src/embed_importer.py --input embedding/ --table embeddings
 ```
 
-### 3. オプションの指定
+### 4. オプションの指定
 
 ```bash
 ./run_pipeline.sh path/to/your/document.pdf \
@@ -229,7 +248,7 @@ python scripts/embed_importer.py --input embedding/ --table embeddings
 - `--claude`: Claudeを画像解析にも使う  
   （`gemini_image_analyzer.py`を呼び出すスクリプトに改変するなど）
 
-### 4. ベクターサーチ（Aurora/pgvector）
+### 5. ベクターサーチ（Aurora/pgvector）
 
 Aurora（PostgreSQL互換）でpgvectorを有効化している場合は、以下のようなクエリで**類似検索**が可能です：
 
@@ -242,6 +261,20 @@ SELECT id,
 ```
 
 (`to_query_vector(:input_vector)` はpgvectorの検索用関数の例)
+
+## LLMモデル情報
+
+### Claude 3.7 Sonnet
+- 最新のAnthropicのモデル
+- モデルID: `claude-3-7-sonnet-20240307`
+- PDFネイティブ対応（最新のAPIベータ機能）
+- 最大入力トークン: 200K
+
+### Gemini 2.5 Pro
+- 最新のGoogleのマルチモーダルモデル
+- モデルID: `gemini-2.5-pro`
+- 画像、PDFの高精度な認識が可能
+- 最大入力トークン: 1M (百万トークン)
 
 ## カスタマイズ
 
