@@ -257,7 +257,7 @@ fi
 # DBインポート（スキップフラグがオフの場合）
 if [ "$SKIP_DB" = false ]; then
     echo "ステップ4: MarkdownをDBにインポートしています..."
-    python "$SCRIPTS_DIR/markdown_importer.py" --input "$MARKDOWN_DIR" --year "$YEAR" --prefix "$QUESTION_PREFIX"
+    python "$SCRIPTS_DIR/markdown_importer.py" "$MARKDOWN_DIR" --year "$YEAR" --prefix "$QUESTION_PREFIX"
     
     if [ $? -ne 0 ]; then
         echo "エラー: DBインポートに失敗しました"
@@ -292,7 +292,7 @@ if [ "$SKIP_EMBEDDING" = false ]; then
             echo "警告: GEMINI_API_KEYが設定されていないようです。.envファイルを確認してください。"
         fi
         
-        MODEL_NAME="gemini-pro-vision"
+        MODEL_NAME="gemini-2.5-pro-exp-03-25"
     fi
     
     python "$SCRIPTS_DIR/gemini_image_analyzer.py" --input "$IMAGES_DIR" --output "$EMBEDDING_DIR" --model "$MODEL_NAME" --parallel "$PARALLEL"

@@ -1,5 +1,9 @@
 # 環境変数ファイル
 .env
+.env.local
+.env.development
+.env.test
+.env.production
 
 # Python関連
 __pycache__/
@@ -24,16 +28,84 @@ var/
 *.egg
 venv/
 .venv/
+pip-log.txt
+pip-delete-this-directory.txt
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Markdownファイル
+*.md
+!README.md
+!SETUP.md
+!CONTRIBUTING.md
+!LICENSE.md
 
 # データディレクトリ
+# ディレクトリ構造のみ保持し、実際のデータファイルは除外
 data/*
 !data/.gitkeep
 
+# 各サブディレクトリの構造は保持
+!data/embedding/
+!data/markdown/
+!data/ocr/
+!data/images/
+!data/pdf/
+!data/claude/
+
+# 各サブディレクトリ内のデータファイルは除外
+data/embedding/*
+data/markdown/*
+data/ocr/*
+data/images/*
+data/pdf/*
+data/claude/*
+
+# 各サブディレクトリに.gitkeepファイルを保持
+!data/embedding/.gitkeep
+!data/markdown/.gitkeep
+!data/ocr/.gitkeep
+!data/images/.gitkeep
+!data/pdf/.gitkeep
+!data/claude/.gitkeep
+
 # macOS関連
 .DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
 
 # エディタの一時ファイル
-.vscode/
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
 .idea/
 *.swp
-*.swo 
+*.swo
+*~
+.*.sw[a-p]
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# ログファイル
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# SSHキー
+y
+y.pub 

@@ -52,7 +52,7 @@ class GeminiImageAnalyzer:
     @param {boolean} extract_text - テキスト抽出を行うかどうか
     @param {boolean} get_embedding - エンベディングを取得するかどうか
     """
-    def __init__(self, api_key=None, model_name="gemini-pro-vision", embedding_dim=1536, 
+    def __init__(self, api_key=None, model_name="gemini-2.5-pro-exp-03-25", embedding_dim=1536, 
                  extract_text=True, get_embedding=True):
         self.logger = logging.getLogger(__name__)
         
@@ -67,13 +67,15 @@ class GeminiImageAnalyzer:
         self.extract_text = extract_text
         self.get_embedding = get_embedding
         
-        # Gemini APIの初期化
-        genai.configure(api_key=self.api_key)
+        # APIエンドポイント設定
+        self.vision_api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
+        self.embedding_api_url = "https://generativelanguage.googleapis.com/v1beta/models/embedding-001:embedContent"
         
-        # モデル取得
-        self.vision_model = genai.GenerativeModel(self.model_name)
-        if self.get_embedding:
-            self.embedding_model = genai.GenerativeModel("embedding-001")
+        # APIヘッダー設定
+        self.headers = {
+            "Content-Type": "application/json",
+            "x-goog-api-key": self.api_key
+        }
     
     def encode_image(self, image_path):
         """
@@ -118,6 +120,10 @@ class GeminiImageAnalyzer:
         try:
             # ファイル名（拡張子なし）
             file_name = os.path.splitext(os.path.basename(image_path))[0]
+            
+            # モデル情報を表示
+            self.logger.info(f"使用モデル: {self.model_name}")
+            print(f"画像解析に使用するモデル: {self.model_name}")
             
             # 出力ディレクトリの設定
             if output_dir:
@@ -189,82 +195,138 @@ class GeminiImageAnalyzer:
                           }
                         ]
                       }  ```
-
-                    3. 図表の処理：
-                    - 図表（図、表、回路図など）は「[figure_N]」形式で示す
-                    - Nは単純な連番（1, 2, 3...）で、文書全体を通して順番に番号付けする
-
-                    4. 数式の処理：
-                    - すべての数式はKaTeX構文で表現する
-                    - インライン数式は単一のドル記号で囲む： $E=mc^2$
-                    - 複雑すぎてKaTeX構文で表現できない場合のみ「[figure_N]」として示す
-
-                    5. 重要な検証ルール：
-                    - 問題が不完全（画像の終わりで切れている）と思われる場合は、出力に含めない
-                    -  画像の下部にあるページ番号は無視する
-                    - 選択肢、解説、および答えが完全な問題のみを含める
-                    - 解説セクションが完全であることを確認してから含める
-
-                    有効かつ完全なJSONのみを出力してください。不完全なコンテンツを検出した場合は、それを補完しようとするのではなく、出力から除外してください。JSONの構文ルールに従い、全ての文字列は二重引用符で囲んでください。また、JSONでは文字列内のバックスラッシュはエスケープする必要があることに注意してください（例：\\frac）。
                     """
                 
-                # Gemini APIを使用して画像を解析
-                attempts = 0
-                while attempts < retry_count:
-                    try:
-                        response = self.vision_model.generate_content(
-                            [
-                                prompt,
-                                {"mime_type": mime_type, "data": image_data}
+                # APIリクエストのデータを構築
+                data = {
+                    "contents": [
+                        {
+                            "role": "user",
+                            "parts": [
+                                {"text": prompt},
+                                {
+                                    "inline_data": {
+                                        "mime_type": mime_type,
+                                        "data": image_data
+                                    }
+                                }
                             ]
+                        }
+                    ],
+                    "generationConfig": {
+                        "temperature": 0.4,
+                        "topK": 32,
+                        "topP": 0.95,
+                        "maxOutputTokens": 8192
+                    }
+                }
+                
+                # リトライループ
+                for attempt in range(retry_count):
+                    try:
+                        # APIリクエスト送信
+                        response = requests.post(
+                            self.vision_api_url,
+                            headers=self.headers,
+                            json=data
                         )
-                        result["text_content"] = response.text
-                        break
-                    except Exception as e:
-                        attempts += 1
-                        if attempts >= retry_count:
-                            self.logger.error(f"テキスト抽出失敗（{attempts}回目）: {str(e)}")
-                            result["error"] = f"テキスト抽出エラー: {str(e)}"
-                            return result
                         
-                        self.logger.warning(f"テキスト抽出でエラー（{attempts}回目）: {str(e)} - 3秒後に再試行します")
-                        time.sleep(3)
+                        # レスポンスをチェック
+                        if response.status_code != 200:
+                            self.logger.error(f"Gemini API エラー ({attempt+1}/{retry_count}): {response.status_code} {response.text}")
+                            if attempt < retry_count - 1:
+                                time.sleep(2 ** attempt)  # 指数バックオフ
+                                continue
+                            else:
+                                result["error"] = f"Gemini API エラー: {response.status_code} {response.text}"
+                                return result
+                        
+                        # レスポンスを解析
+                        response_json = response.json()
+                        
+                        if "candidates" not in response_json or len(response_json["candidates"]) == 0:
+                            self.logger.error(f"Gemini API レスポンスにcandidatesがありません: {response_json}")
+                            if attempt < retry_count - 1:
+                                time.sleep(2 ** attempt)
+                                continue
+                            else:
+                                result["error"] = "Gemini API レスポンスに有効なcandidatesがありません"
+                                return result
+                        
+                        # テキスト部分を抽出
+                        text_parts = []
+                        for part in response_json["candidates"][0]["content"]["parts"]:
+                            if "text" in part:
+                                text_parts.append(part["text"])
+                        
+                        result["text_content"] = "\n".join(text_parts)
+                        break  # 成功したらループを抜ける
+                        
+                    except Exception as e:
+                        self.logger.error(f"Gemini API処理中にエラーが発生しました ({attempt+1}/{retry_count}): {str(e)}")
+                        if attempt < retry_count - 1:
+                            time.sleep(2 ** attempt)
+                        else:
+                            result["error"] = f"Gemini API処理エラー: {str(e)}"
+                            return result
             
             # エンベディング取得（設定されている場合）
-            if self.get_embedding:
-                self.logger.info(f"画像のエンベディングを取得: {image_path}")
+            if self.get_embedding and result["text_content"]:
+                self.logger.info(f"テキストからエンベディングを取得: {image_path}")
                 
-                # テキスト内容を取得済みの場合は、それを利用してマルチモーダルエンベディングを取得
-                text_for_embedding = ""
-                if result["text_content"]:
-                    # テキスト内容が長すぎる場合はトリミング
-                    text_for_embedding = result["text_content"][:1000]
+                # エンベディング用のAPIリクエストのデータを構築
+                embedding_data = {
+                    "model": "embedding-001",
+                    "content": {
+                        "parts": [
+                            {"text": result["text_content"]}
+                        ]
+                    }
+                }
                 
-                # マルチモーダルエンベディング（テキスト+画像）
-                try:
-                    # エンベディング処理
-                    # 注意: 実際のAPIによってはマルチモーダルエンベディングをサポートしていない場合があります
-                    # その場合は、テキストのみのエンベディングを代わりに取得します
-                    
-                    # Geminiの場合は直接マルチモーダルエンベディングが提供されていないため、
-                    # テキスト抽出結果のエンベディングを取得します
-                    if result["text_content"]:
-                        embedding_result = self.embedding_model.embed_content(
-                            result["text_content"],
-                            task_type="retrieval_document"
+                # リトライループ
+                for attempt in range(retry_count):
+                    try:
+                        # APIリクエスト送信
+                        embedding_response = requests.post(
+                            self.embedding_api_url,
+                            headers=self.headers,
+                            json=embedding_data
                         )
-                        embedding_vector = embedding_result["embedding"]
-                        result["embedding"] = np.array(embedding_vector)
-                    else:
-                        # テキスト内容がない場合は、仮のエンベディングを生成
-                        self.logger.warning(f"テキスト内容がないため、ダミーエンベディングを生成します: {image_path}")
-                        result["embedding"] = np.zeros(self.embedding_dim)
-                    
-                except Exception as e:
-                    self.logger.error(f"エンベディング取得エラー: {str(e)}")
-                    result["error"] = f"エンベディングエラー: {str(e)}"
-                    # エンベディングの取得に失敗しても、テキスト抽出には成功している可能性があるため、
-                    # エラーは記録するがプロセスは続行
+                        
+                        # レスポンスをチェック
+                        if embedding_response.status_code != 200:
+                            self.logger.error(f"Embedding API エラー ({attempt+1}/{retry_count}): {embedding_response.status_code} {embedding_response.text}")
+                            if attempt < retry_count - 1:
+                                time.sleep(2 ** attempt)
+                                continue
+                            else:
+                                result["error"] = f"Embedding API エラー: {embedding_response.status_code} {embedding_response.text}"
+                                return result
+                        
+                        # レスポンスを解析
+                        embedding_json = embedding_response.json()
+                        
+                        if "embedding" not in embedding_json or "values" not in embedding_json["embedding"]:
+                            self.logger.error(f"Embedding API レスポンスに有効なデータがありません: {embedding_json}")
+                            if attempt < retry_count - 1:
+                                time.sleep(2 ** attempt)
+                                continue
+                            else:
+                                result["error"] = "Embedding API レスポンスに有効なデータがありません"
+                                return result
+                        
+                        # エンベディング値を取得
+                        result["embedding"] = np.array(embedding_json["embedding"]["values"], dtype=np.float32)
+                        break  # 成功したらループを抜ける
+                        
+                    except Exception as e:
+                        self.logger.error(f"Embedding API処理中にエラーが発生しました ({attempt+1}/{retry_count}): {str(e)}")
+                        if attempt < retry_count - 1:
+                            time.sleep(2 ** attempt)
+                        else:
+                            result["error"] = f"Embedding API処理エラー: {str(e)}"
+                            return result
             
             # 結果が取得できたかどうか
             result["success"] = (result["text_content"] is not None) or (result["embedding"] is not None)
@@ -395,7 +457,7 @@ def main():
     parser.add_argument('--output', '-o', required=True, help='出力ディレクトリのパス')
     parser.add_argument('--text', '-t', help='画像に関連するテキスト（単一ファイル処理時）')
     parser.add_argument('--text-file', '-tf', help='ファイル名とテキストのマッピングを含むJSONファイル（ディレクトリ処理時）')
-    parser.add_argument('--model', default='gemini-pro-vision', help='使用するGeminiモデル（デフォルト: gemini-pro-vision）')
+    parser.add_argument('--model', default='gemini-2.5-pro-exp-03-25', help='使用するGeminiモデル（デフォルト: gemini-2.5-pro-exp-03-25）')
     parser.add_argument('--no-text', action='store_true', help='テキスト抽出を行わない')
     parser.add_argument('--no-embedding', action='store_true', help='エンベディングを取得しない')
     parser.add_argument('--api-key', help='Gemini APIキー（指定しない場合は環境変数から取得）')

@@ -193,9 +193,12 @@ OPENAI_API_KEY=your_openai_api_key
 ```
 .
 ├── README.md                     # このファイル
+├── SETUP.md                      # セットアップガイド
 ├── run_pipeline.sh               # ワークフロー実行スクリプト
 ├── extract_sample.sh             # サンプルページ抽出スクリプト
-├── .env                          # 環境変数設定ファイル（要作成）
+├── requirements.txt              # 必要なPythonパッケージ一覧
+├── .env                          # 環境変数設定ファイル
+├── .env.sample                   # 環境変数設定サンプル
 ├── src/                          # 各種Pythonスクリプト
 │   ├── pdf_to_images.py               # [1] PDF→画像変換
 │   ├── ocr_engine.py                  # [2] OCR処理 (Tesseract/LLM)
@@ -208,14 +211,17 @@ OPENAI_API_KEY=your_openai_api_key
 │   ├── pdf2md_claude.py               # Claude 3.7 Sonnetを使ったPDF→Markdown変換
 │   ├── pdf2md_gemini.py               # Gemini 2.5 Proを使ったPDF→Markdown変換
 │   ├── extract_sample_pages.py        # PDFからサンプルページを抽出するスクリプト
-│   └── ...
+│   ├── README.md                      # srcディレクトリのREADME
+│   ├── input/                         # 入力ファイル保存ディレクトリ
+│   └── output/                        # 出力ファイル保存ディレクトリ
 └── data/                         # データファイル（自動生成）
     ├── pdf/                      # 元のPDFファイル
     ├── images/                   # 画像化したファイル
     ├── ocr/                      # OCRテキスト
     ├── markdown/                 # 変換されたMarkdown
     ├── embedding/                # 画像・テキスト埋め込み（ベクトル）
-    └── ...
+    ├── claude/                   # Claude APIの出力結果
+    └── .gitkeep                  # 空ディレクトリをバージョン管理するためのファイル
 ```
 
 ## パイプラインの流れ

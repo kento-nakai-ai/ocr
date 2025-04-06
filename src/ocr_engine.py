@@ -267,29 +267,68 @@ class LLMBasedOCR(OCREngine):
         @return {string} 抽出されたテキスト
         """
         try:
-            import google.generativeai as genai
+            # 直接HTTPリクエストを使用してGemini APIを呼び出す
+            self.logger.info("HTTP APIを使用してGemini 2.5 Proに接続しています...")
             
-            genai.configure(api_key=self.api_key)
+            # 画像をBase64エンコード
+            base64_image = self.encode_image(image_path)
             
-            # マルチモーダルモデルを使用
-            model = genai.GenerativeModel('gemini-pro-vision')
+            # APIエンドポイントとヘッダーを設定
+            url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro-exp-03-25:generateContent"
+            headers = {
+                "Content-Type": "application/json",
+                "x-goog-api-key": self.api_key
+            }
             
-            # 画像を読み込み
-            image_parts = [
-                {
-                    "mime_type": "image/png",
-                    "data": self.encode_image(image_path)
+            # リクエストボディを構築
+            data = {
+                "contents": [
+                    {
+                        "role": "user",
+                        "parts": [
+                            {"text": self.prompt},
+                            {
+                                "inline_data": {
+                                    "mime_type": "image/jpeg",
+                                    "data": base64_image
+                                }
+                            }
+                        ]
+                    }
+                ],
+                "generationConfig": {
+                    "temperature": 0.4,
+                    "topK": 32,
+                    "topP": 0.95,
+                    "maxOutputTokens": 8192
                 }
-            ]
+            }
             
-            # 生成リクエストを実行
-            response = model.generate_content([self.prompt, image_parts[0]])
+            # APIリクエストを送信
+            response = requests.post(url, headers=headers, json=data)
             
-            return response.text
+            # レスポンスをチェック
+            if response.status_code != 200:
+                self.logger.error(f"Gemini API エラー: {response.status_code} {response.text}")
+                raise Exception(f"Gemini API エラー: {response.status_code} {response.text}")
             
-        except ImportError:
-            self.logger.error("google-cloud-aiplatformパッケージがインストールされていません。")
-            self.logger.error("pip install google-cloud-aiplatform を実行してインストールしてください。")
+            # レスポンスを解析
+            response_json = response.json()
+            
+            if "candidates" not in response_json or len(response_json["candidates"]) == 0:
+                self.logger.error(f"Gemini API レスポンスにcandidatesがありません: {response_json}")
+                raise Exception("Gemini API レスポンスに有効なcandidatesがありません")
+            
+            # テキスト部分を抽出
+            text_parts = []
+            for part in response_json["candidates"][0]["content"]["parts"]:
+                if "text" in part:
+                    text_parts.append(part["text"])
+            
+            return "\n".join(text_parts)
+            
+        except Exception as e:
+            self.logger.error(f"Gemini API処理中にエラーが発生しました: {str(e)}")
             raise
     
     def process_single_image(self, image_path):
