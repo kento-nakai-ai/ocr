@@ -6,9 +6,10 @@
 2. **OCR（ローカル or LLMベース）でテキスト抽出**  
 3. **Markdown整形（KaTeX数式や画像タグ対応）**  
 4. **PostgreSQL（またはAurora）へMarkdownデータをインポート**  
-5. **画像をGemini/ClaudeなどのマルチモーダルAPIへ渡し、埋め込み（Embedding）を取得**  
-6. **Embedding結果をDBに格納（ベクターサーチに対応）**  
-7. **得られたメタ情報を追加でDBに格納またはJSON化**  
+5. **画像をGemini/ClaudeなどのマルチモーダルAPIへ渡し、解析結果を取得**  
+6. **解析結果から埋め込み（Embedding）ベクトルを生成**  
+7. **Embedding結果をDBに格納（ベクターサーチに対応）**  
+8. **得られたメタ情報を追加でDBに格納またはJSON化**  
 
 この一連のパイプラインにより、類似問題検索などの機能（マルチモーダルベースのベクターサーチ）を実現します。
 
@@ -23,13 +24,16 @@
    - テキストをKaTeX数式や適切な画像タグに整形
 4. **PostgreSQL/Auroraにインポート（markdown_importer.py）**  
    - `questions`テーブルなどにMarkdown形式の本文や年度、問題IDなどを格納
-5. **マルチモーダルAPI（Gemini等）で画像解析 & Embedding取得**  
-   - 画像をAPIに送信→テキスト/特徴量（ベクトル）を取得  
-   - もしくはテキスト＋画像の両方を入力し、マルチモーダル埋め込みを生成
-6. **Embedding結果をDBに格納**  
+5. **マルチモーダルAPI（Claude/Gemini等）で画像解析**  
+   - 画像をAPIに送信→テキスト/解析結果（JSON）を取得
+   - `claude_image_analyzer.py`/`gemini_image_analyzer.py`で処理
+6. **埋め込みベクトル生成（generate_embedding.py）**  
+   - 解析結果JSONから埋め込みベクトルを生成
+   - ベクトルをnumpy形式で保存
+7. **Embedding結果をDBに格納（embed_importer.py）**  
    - Aurora PostgreSQLの場合、[pgvector拡張](https://github.com/pgvector/pgvector)などを利用可能  
    - 類似度ベースの検索（ベクターサーチ）に活用
-7. **追加メタ情報の管理**  
+8. **追加メタ情報の管理**  
    - Gemini/Claude等から返却されるJSON形式の解析結果をDBに格納するか、別途JSONで保持するかを選択  
    - 必要に応じて`metadata`テーブルを追加し、類似問題のIDやスコアなどを管理
 
@@ -50,7 +54,7 @@
 ### Pythonパッケージ例
 
 ```bash
-pip install pdf2image psycopg2-binary python-dotenv anthropic PyPDF2 google-generativeai
+pip install pdf2image psycopg2-binary python-dotenv anthropic PyPDF2 google-generativeai numpy
 # LLM使用例:
 # pip install openai  # GPT-4等
 # pip install google-cloud-aiplatform  # 例: Vertex AI使用時など
@@ -163,11 +167,13 @@ OPENAI_API_KEY=your_openai_api_key
 │   ├── ocr_engine.py                  # [2] OCR処理 (Tesseract/LLM)
 │   ├── ocr_to_markdown.py             # [3] テキスト→Markdown変換
 │   ├── markdown_importer.py           # [4] Markdown→DBインポート
+│   ├── claude_image_analyzer.py       # [5a] Claudeを使った画像解析
+│   ├── gemini_image_analyzer.py       # [5b] Geminiを使った画像解析
+│   ├── generate_embedding.py          # [6] 解析結果からエンベディング生成
+│   ├── embed_importer.py              # [7] Embedding情報をDB格納
 │   ├── pdf2md_claude.py               # Claude 3.7 Sonnetを使ったPDF→Markdown変換
 │   ├── pdf2md_gemini.py               # Gemini 2.5 Proを使ったPDF→Markdown変換
 │   ├── extract_sample_pages.py        # PDFからサンプルページを抽出するスクリプト
-│   ├── gemini_image_analyzer.py       # [5] Geminiなどでマルチモーダル解析
-│   ├── embed_importer.py              # [6] Embedding情報をDB格納
 │   └── ...
 └── data/                         # データファイル（自動生成）
     ├── pdf/                      # 元のPDFファイル
@@ -190,13 +196,16 @@ OPENAI_API_KEY=your_openai_api_key
 4. **[4] MarkdownをPostgreSQL/Auroraへインポート**  
    - `markdown_importer.py` で `questions` テーブルにINSERT  
    - 質問文、年度、問題IDなどを登録
-5. **[5] 画像解析 & 埋め込み取得（マルチモーダルAPI）**  
-   - `gemini_image_analyzer.py` (名前は例)で画像＋テキストをAPIへ送信  
-   - 埋め込み（ベクトル）を取得し、ローカルに`.npy`やJSON形式で保存
-6. **[6] ベクトル情報をDBへ格納**  
+5. **[5] 画像解析（マルチモーダルAPI）**  
+   - `claude_image_analyzer.py`または`gemini_image_analyzer.py`で画像をAPIへ送信  
+   - 解析結果をJSON形式で保存
+6. **[6] 埋め込みベクトル（Embedding）生成**  
+   - `generate_embedding.py`でJSON解析結果から埋め込みベクトルを生成
+   - ベクトルをnumpy形式（.npy）で保存
+7. **[7] ベクトル情報をDBへ格納**  
    - `embed_importer.py`でPostgreSQL/Aurora(ポスグレ互換)のベクトル型カラムにINSERT  
    - pgvector拡張などを用いてベクターサーチを可能にする
-7. **[7] メタ情報を追加でDB保存 or JSON管理**  
+8. **[8] メタ情報を追加でDB保存 or JSON管理**  
    - 類似問題のスコアや補足データを`metadata`テーブルに入れる  
    - またはJSONファイルで管理し、必要に応じてフロントエンドから読み込む
 
@@ -208,7 +217,7 @@ OPENAI_API_KEY=your_openai_api_key
 ./run_pipeline.sh path/to/your/document.pdf
 ```
 
-- 上記でステップ[1]～[4]が一括実行されます（OCRはデフォルトでTesseract）
+- 上記でステップ[1]～[8]が一括実行されます（OCRはデフォルトでTesseract）
 
 ### 2. サンプルページの抽出と処理
 
@@ -225,13 +234,33 @@ OPENAI_API_KEY=your_openai_api_key
   - `--dpi NUM`: 画像変換時のDPI値（デフォルト：300）
   - `--format FORMAT`: 画像フォーマット（png/jpeg、デフォルト：png）
 
-### 3. マルチモーダル解析・Embeddingインポート
+### 3. 個別モジュールの実行
+
+各ステップを個別に実行することもできます：
 
 ```bash
-# Gemini/ClaudeなどのAPIを使って画像解析＆ベクトル取得
-python src/gemini_image_analyzer.py --input images/ --output embedding/
-# 得られたembeddingをDBに登録
-python src/embed_importer.py --input embedding/ --table embeddings
+# [1] PDFから画像への変換
+python src/pdf_to_images.py data/pdf/example.pdf --output_dir data/images --dpi 300 --format png
+
+# [2] OCR処理（TesseractまたはLLM）
+python src/ocr_engine.py data/images data/ocr [--use-llm] [--llm-provider claude|gemini]
+
+# [3] OCRテキストをMarkdownへ変換
+python src/ocr_to_markdown.py data/ocr data/markdown --image-base-path "../images"
+
+# [4] MarkdownをDBへインポート
+python src/markdown_importer.py --input data/markdown --year 2024 --prefix "Q"
+
+# [5] 画像解析（Claude/Gemini）
+python src/claude_image_analyzer.py --input data/images --output data/embedding
+# または
+python src/gemini_image_analyzer.py --input data/images --output data/embedding
+
+# [6] 埋め込みベクトル生成
+python src/generate_embedding.py --input data/embedding --dimension 1536 --parallel 4
+
+# [7] エンベディングをDBにインポート
+python src/embed_importer.py --input data/embedding --table embeddings
 ```
 
 ### 4. オプションの指定
@@ -245,8 +274,8 @@ python src/embed_importer.py --input embedding/ --table embeddings
 ```
 
 - `--use-llm`: OCRにLLM APIを使用
-- `--claude`: Claudeを画像解析にも使う  
-  （`gemini_image_analyzer.py`を呼び出すスクリプトに改変するなど）
+- `--claude`: Claude APIを画像解析に使用
+- `--dpi 600`: 高解像度でPDFを画像に変換
 
 ### 5. ベクターサーチ（Aurora/pgvector）
 
@@ -280,6 +309,8 @@ SELECT id,
 
 - **OCRエンジン切り替え**  
   `ocr_engine.py` 内で `--use-llm` フラグに応じてTesseract / Gemini / Claude / GPT-4等を切り替え。  
+- **埋め込み生成**  
+  `generate_embedding.py` 内で、実際のAPIから取得した埋め込みベクトルに置き換えることが可能。  
 - **埋め込み格納**  
   `embed_importer.py` 内で、ベクトル型カラム（pgvector拡張）へINSERTするSQLを定義。  
 - **メタ情報管理**  
@@ -297,6 +328,9 @@ SELECT id,
 - **ベクター型が見つからない**  
   - PostgreSQLの拡張（pgvectorなど）を有効化しているかチェック  
   - Auroraのバージョン・設定確認
+- **エンベディング生成エラー**  
+  - JSONファイルのフォーマットを確認
+  - 必要なフィールド（text_contentなど）が存在するか確認
 
 ## 参考リンク
 
