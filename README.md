@@ -56,6 +56,78 @@ pip install pdf2image psycopg2-binary python-dotenv anthropic
 # pip install google-cloud-aiplatform  # 例: Vertex AI使用時など
 ```
 
+## 仮想環境のセットアップ
+
+プロジェクトの依存関係をクリーンに管理するため、仮想環境の使用を強く推奨します。以下の手順でセットアップしてください。
+
+### 仮想環境の作成
+
+#### macOS / Linux:
+
+```bash
+# プロジェクトディレクトリに移動
+cd /path/to/ocr-project
+
+# 仮想環境を作成
+python -m venv venv
+
+# 仮想環境をアクティブ化
+source venv/bin/activate
+```
+
+#### Windows:
+
+```bash
+# プロジェクトディレクトリに移動
+cd C:\path\to\ocr-project
+
+# 仮想環境を作成
+python -m venv venv
+
+# 仮想環境をアクティブ化
+venv\Scripts\activate
+```
+
+### パッケージのインストール
+
+仮想環境をアクティブ化した状態で以下のコマンドを実行します：
+
+```bash
+# pipを最新バージョンにアップグレード（推奨）
+pip install --upgrade pip
+
+# 必要なパッケージをインストール
+pip install -r requirements.txt
+```
+
+### 仮想環境の終了
+
+作業が終了したら、以下のコマンドで仮想環境を終了できます：
+
+```bash
+deactivate
+```
+
+### 仮想環境の再アクティブ化
+
+次回作業を行う際は、仮想環境を再度アクティブ化します：
+
+#### macOS / Linux:
+```bash
+source venv/bin/activate
+```
+
+#### Windows:
+```bash
+venv\Scripts\activate
+```
+
+### 注意点
+
+- ターミナル/コマンドプロンプトのプロンプトが `(venv)` で始まっていれば、仮想環境がアクティブな状態です
+- プロジェクト関連のコマンドはすべて仮想環境がアクティブな状態で実行してください
+- `requirements.txt` に変更があった場合は、再度 `pip install -r requirements.txt` を実行して依存関係を更新してください
+
 ### 環境変数
 
 `.env`ファイルをプロジェクトルートに作成し、以下の内容を設定してください（例）:
