@@ -7,6 +7,7 @@
 3. **Markdown整形（KaTeX数式や画像タグ対応）**  
 4. **PostgreSQL（またはAurora）へMarkdownデータをインポート**  
 5. **画像をGemini/ClaudeなどのマルチモーダルAPIへ渡し、解析結果を取得**  
+   - **日本語試験問題を抽出し、JSON形式で構造化**
 6. **解析結果から埋め込み（Embedding）ベクトルを生成**  
 7. **Embedding結果をDBに格納（ベクターサーチに対応）**  
 8. **得られたメタ情報を追加でDBに格納またはJSON化**  
@@ -27,6 +28,39 @@
 5. **マルチモーダルAPI（Claude/Gemini等）で画像解析**  
    - 画像をAPIに送信→テキスト/解析結果（JSON）を取得
    - `claude_image_analyzer.py`/`gemini_image_analyzer.py`で処理
+   - **日本語試験問題の構造化抽出**：
+     - 問題番号、問題文、選択肢、解説、正解などを自動認識
+     - 以下のようなJSON形式で出力：
+     ```json
+     {
+       "problems": [
+         {
+           "id": 1,
+           "question": "問題文...$Q = R I^2 t$...続く問題文",
+           "choices": [
+             {
+               "number": 1,
+               "text": "選択肢1..."
+             },
+             {
+               "number": 2,
+               "text": "選択肢2..."
+             },
+             {
+               "number": 3,
+               "text": "選択肢3..."
+             },
+             {
+               "number": 4,
+               "text": "選択肢4..."
+             }
+           ],
+           "explanation": "解説文...$M = -e_2 \\frac{\\Delta t}{\\Delta i_1}$...続く解説文",
+           "correct_answer": 3
+         }
+       ]
+     }
+     ```
 6. **埋め込みベクトル生成（generate_embedding.py）**  
    - 解析結果JSONから埋め込みベクトルを生成
    - ベクトルをnumpy形式で保存
@@ -199,6 +233,39 @@ OPENAI_API_KEY=your_openai_api_key
 5. **[5] 画像解析（マルチモーダルAPI）**  
    - `claude_image_analyzer.py`または`gemini_image_analyzer.py`で画像をAPIへ送信  
    - 解析結果をJSON形式で保存
+   - **日本語試験問題の構造化抽出**：
+     - 問題番号、問題文、選択肢、解説、正解などを自動認識
+     - 以下のようなJSON形式で出力：
+     ```json
+     {
+       "problems": [
+         {
+           "id": 1,
+           "question": "問題文...$Q = R I^2 t$...続く問題文",
+           "choices": [
+             {
+               "number": 1,
+               "text": "選択肢1..."
+             },
+             {
+               "number": 2,
+               "text": "選択肢2..."
+             },
+             {
+               "number": 3,
+               "text": "選択肢3..."
+             },
+             {
+               "number": 4,
+               "text": "選択肢4..."
+             }
+           ],
+           "explanation": "解説文...$M = -e_2 \\frac{\\Delta t}{\\Delta i_1}$...続く解説文",
+           "correct_answer": 3
+         }
+       ]
+     }
+     ```
 6. **[6] 埋め込みベクトル（Embedding）生成**  
    - `generate_embedding.py`でJSON解析結果から埋め込みベクトルを生成
    - ベクトルをnumpy形式（.npy）で保存
@@ -251,7 +318,7 @@ python src/ocr_to_markdown.py data/ocr data/markdown --image-base-path "../image
 # [4] MarkdownをDBへインポート
 python src/markdown_importer.py --input data/markdown --year 2024 --prefix "Q"
 
-# [5] 画像解析（Claude/Gemini）
+# [5] 画像解析（Claude/Gemini）と日本語試験問題抽出
 python src/claude_image_analyzer.py --input data/images --output data/embedding
 # または
 python src/gemini_image_analyzer.py --input data/images --output data/embedding
@@ -277,7 +344,58 @@ python src/embed_importer.py --input data/embedding --table embeddings
 - `--claude`: Claude APIを画像解析に使用
 - `--dpi 600`: 高解像度でPDFを画像に変換
 
-### 5. ベクターサーチ（Aurora/pgvector）
+### 5. 日本語試験問題抽出機能
+
+日本語の試験問題を画像から抽出し、構造化された形式に変換します：
+
+```bash
+# Claudeを使った画像からの問題抽出
+python src/claude_image_analyzer.py 問題画像.png --output output.json
+
+# または、Geminiを使った画像からの問題抽出
+python src/gemini_image_analyzer.py --input 問題画像.png --output ./出力ディレクトリ
+```
+
+出力されるJSONは以下の形式になります：
+
+```json
+{
+  "problems": [
+    {
+      "id": 1,
+      "question": "問題文...$Q = R I^2 t$...続く問題文",
+      "choices": [
+        {
+          "number": 1,
+          "text": "選択肢1..."
+        },
+        {
+          "number": 2,
+          "text": "選択肢2..."
+        },
+        {
+          "number": 3,
+          "text": "選択肢3..."
+        },
+        {
+          "number": 4,
+          "text": "選択肢4..."
+        }
+      ],
+      "explanation": "解説文...$M = -e_2 \\frac{\\Delta t}{\\Delta i_1}$...続く解説文",
+      "correct_answer": 3
+    }
+  ]
+}
+```
+
+この構造化データは以下の特徴を持っています：
+- 問題番号、問題文、選択肢、解説、正解を体系的に整理
+- 数式はKaTeX構文で表現（インライン数式は $...$ で囲む）
+- 図表は `[figure_N]` 形式で表現
+- 不完全な問題は出力から除外
+
+### 6. ベクターサーチ（Aurora/pgvector）
 
 Aurora（PostgreSQL互換）でpgvectorを有効化している場合は、以下のようなクエリで**類似検索**が可能です：
 
@@ -309,6 +427,8 @@ SELECT id,
 
 - **OCRエンジン切り替え**  
   `ocr_engine.py` 内で `--use-llm` フラグに応じてTesseract / Gemini / Claude / GPT-4等を切り替え。  
+- **画像解析プロンプト変更**  
+  `claude_image_analyzer.py`や`gemini_image_analyzer.py`内のプロンプト部分を編集して、異なる形式や目的に応じた抽出が可能。
 - **埋め込み生成**  
   `generate_embedding.py` 内で、実際のAPIから取得した埋め込みベクトルに置き換えることが可能。  
 - **埋め込み格納**  
@@ -331,6 +451,9 @@ SELECT id,
 - **エンベディング生成エラー**  
   - JSONファイルのフォーマットを確認
   - 必要なフィールド（text_contentなど）が存在するか確認
+- **JSON構造化エラー**
+  - 画像の解像度を上げてみる
+  - 複雑すぎる問題や図表が多い場合は、より高性能なモデル（Claude-3-Opus等）を使用する
 
 ## 参考リンク
 
