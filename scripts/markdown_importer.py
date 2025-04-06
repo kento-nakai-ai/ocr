@@ -2,268 +2,365 @@
 # -*- coding: utf-8 -*-
 
 """
-Markdownファイルの内容をPostgreSQLデータベースにインポートするスクリプト
+Markdownファイルをデータベースにインポートするスクリプト
 
-このスクリプトは、Markdown形式のファイルを読み込み、PostgreSQLデータベースの
-questionsテーブルにインポートします。既存のレコードがある場合はUPDATEし、
-なければINSERTします。
+このスクリプトは、Markdown形式のファイルをPostgreSQL（またはAurora）
+データベースにインポートします。問題文や年度、問題IDなどのメタデータを
+questionsテーブルに格納します。
 
-要件:
-    - psycopg2: PostgreSQL用のPythonアダプタ
-    - python-dotenv: 環境変数管理のためのライブラリ
+仕様:
+- 入力: Markdownファイル
+- 出力: PostgreSQLデータベースへのインポート
+- テーブル: questions（問題テキスト、年度、問題ID等を格納）
 
-使用例:
-    python markdown_importer.py file.md 2025 "Q001"
-    python markdown_importer.py --batch folder/ 2025
+制限事項:
+- データベーステーブルが事前に作成されている必要があります
+- .envファイルにデータベース接続情報が設定されている必要があります
 """
 
 import os
 import argparse
 import logging
-import glob
+import re
+from pathlib import Path
 import psycopg2
-from psycopg2 import sql
 from dotenv import load_dotenv
 
-
-# ロギング設定
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
-
+# .envファイルから環境変数を読み込む
+load_dotenv()
 
 class MarkdownImporter:
     """
-    Markdownファイルの内容をPostgreSQLデータベースにインポートするクラス
+    Markdownファイルをデータベースにインポートするクラス
+    
+    @param {string} input_path - 入力Markdownファイルまたはディレクトリのパス
+    @param {number} year - 問題の年度
+    @param {string} question_prefix - 問題IDのプレフィックス
+    @param {boolean} create_table - テーブルが存在しない場合に作成するかどうか
     """
+    def __init__(self, input_path, year=None, question_prefix="Q", create_table=True):
+        self.input_path = input_path
+        self.year = year
+        self.question_prefix = question_prefix
+        self.create_table = create_table
+        self.logger = logging.getLogger(__name__)
+        
+        # DBの接続情報を環境変数から取得
+        self.db_host = os.getenv('DB_HOST', 'localhost')
+        self.db_port = os.getenv('DB_PORT', '5432')
+        self.db_name = os.getenv('DB_NAME', 'questions_db')
+        self.db_user = os.getenv('DB_USER', 'postgres')
+        self.db_password = os.getenv('DB_PASSWORD', '')
+        
+        # データベース接続を初期化
+        self.conn = None
     
-    def __init__(self, db_config=None):
+    def connect_db(self):
         """
-        初期化
+        データベースに接続
         
-        Args:
-            db_config (dict, optional): データベース接続設定
-                以下のキーを含む辞書:
-                - host: ホスト名
-                - port: ポート番号
-                - database: データベース名
-                - user: ユーザー名
-                - password: パスワード
-        """
-        # 環境変数から設定を読み込む
-        load_dotenv()
-        
-        # 接続設定
-        self.db_config = db_config or {
-            'host': os.getenv('DB_HOST', 'localhost'),
-            'port': os.getenv('DB_PORT', '5432'),
-            'database': os.getenv('DB_NAME', 'questions_db'),
-            'user': os.getenv('DB_USER', 'postgres'),
-            'password': os.getenv('DB_PASSWORD', '')
-        }
-        
-        logger.info(f"データベース接続設定: {self.db_config['host']}:{self.db_config['port']}/{self.db_config['database']}")
-    
-    def get_connection(self):
-        """
-        データベース接続を取得します
-        
-        Returns:
-            psycopg2.connection: データベース接続オブジェクト
+        @return {Connection} データベース接続オブジェクト
         """
         try:
-            conn = psycopg2.connect(**self.db_config)
+            self.logger.info(f"データベースに接続: {self.db_host}:{self.db_port}/{self.db_name}")
+            
+            conn = psycopg2.connect(
+                host=self.db_host,
+                port=self.db_port,
+                dbname=self.db_name,
+                user=self.db_user,
+                password=self.db_password
+            )
+            
+            self.logger.info("データベース接続成功")
             return conn
+            
         except Exception as e:
-            logger.error(f"データベース接続エラー: {str(e)}")
+            self.logger.error(f"データベース接続エラー: {str(e)}")
             raise
     
-    def import_markdown(self, markdown_path, year, question_id):
+    def create_questions_table(self):
         """
-        Markdownファイルの内容をデータベースにインポートします
-        
-        Args:
-            markdown_path (str): Markdownファイルのパス
-            year (str): 年度
-            question_id (str): 問題ID
+        questionsテーブルを作成（存在しない場合）
+        """
+        if not self.create_table:
+            return
             
-        Returns:
-            bool: インポートが成功したかどうか
-        """
-        # ファイルの存在確認
-        if not os.path.exists(markdown_path):
-            logger.error(f"ファイルが見つかりません: {markdown_path}")
-            return False
-        
         try:
-            # ファイル内容の読み込み
-            with open(markdown_path, 'r', encoding='utf-8') as f:
-                markdown_content = f.read()
+            cursor = self.conn.cursor()
             
-            # データベース接続
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            
-            # questionsテーブルの存在を確認
+            # questionsテーブルの作成
             cursor.execute("""
-                SELECT EXISTS (
-                    SELECT FROM information_schema.tables 
-                    WHERE table_name = 'questions'
-                );
+                CREATE TABLE IF NOT EXISTS questions (
+                    id SERIAL PRIMARY KEY,
+                    question_id VARCHAR(50) UNIQUE NOT NULL,
+                    year INTEGER,
+                    content TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
             """)
-            table_exists = cursor.fetchone()[0]
             
-            # テーブルが存在しない場合は作成
-            if not table_exists:
-                logger.info("questionsテーブルが存在しないため作成します")
-                cursor.execute("""
-                    CREATE TABLE questions (
-                        id VARCHAR(50) PRIMARY KEY,
-                        body TEXT NOT NULL,
-                        year_list TEXT DEFAULT '',
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    );
-                """)
-                conn.commit()
-            
-            # 既存レコードの確認
-            cursor.execute(
-                "SELECT id, year_list FROM questions WHERE id = %s",
-                (question_id,)
-            )
-            existing_record = cursor.fetchone()
-            
-            if existing_record:
-                # 既存の年度リストに年度を追加（重複なし）
-                year_list = existing_record[1]
-                years = set(year_list.split(',')) if year_list else set()
-                years.add(year)
-                new_year_list = ','.join(sorted(years))
+            # 既にベクトル型の拡張機能がある場合は、embeddings用のテーブルも作成
+            try:
+                # まずpgvector拡張が存在するか確認
+                cursor.execute("SELECT 1 FROM pg_extension WHERE extname = 'vector'")
+                extension_exists = cursor.fetchone()
                 
-                # UPDATEクエリの実行
-                cursor.execute(
-                    """
-                    UPDATE questions 
-                    SET body = %s, year_list = %s, updated_at = CURRENT_TIMESTAMP 
-                    WHERE id = %s
-                    """,
-                    (markdown_content, new_year_list, question_id)
-                )
-                logger.info(f"レコードを更新しました: {question_id} (年度: {new_year_list})")
-            else:
-                # INSERTクエリの実行
-                cursor.execute(
-                    """
-                    INSERT INTO questions (id, body, year_list) 
-                    VALUES (%s, %s, %s)
-                    """,
-                    (question_id, markdown_content, year)
-                )
-                logger.info(f"レコードを挿入しました: {question_id} (年度: {year})")
+                if extension_exists:
+                    # pgvector拡張が存在する場合はembeddingsテーブル作成
+                    self.logger.info("pgvector拡張が検出されました。embeddingsテーブルを作成します。")
+                    cursor.execute("""
+                        CREATE TABLE IF NOT EXISTS embeddings (
+                            id SERIAL PRIMARY KEY,
+                            question_id VARCHAR(50) REFERENCES questions(question_id),
+                            embedding vector(1536),
+                            metadata JSONB,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        )
+                    """)
+                    
+                    # インデックス作成
+                    cursor.execute("""
+                        CREATE INDEX IF NOT EXISTS embeddings_question_id_idx 
+                        ON embeddings (question_id)
+                    """)
+                    
+                    # ベクトル検索用インデックス
+                    cursor.execute("""
+                        CREATE INDEX IF NOT EXISTS embeddings_vector_idx 
+                        ON embeddings USING ivfflat (embedding vector_l2_ops)
+                    """)
+            except:
+                self.logger.warning("pgvector拡張が存在しないか、テーブル作成に失敗しました。embeddingsテーブルはスキップします。")
             
-            # コミット
-            conn.commit()
+            self.conn.commit()
+            self.logger.info("テーブル作成完了")
             
-            # 接続のクローズ
-            cursor.close()
-            conn.close()
+        except Exception as e:
+            self.conn.rollback()
+            self.logger.error(f"テーブル作成エラー: {str(e)}")
+            raise
+    
+    def extract_question_number(self, filename):
+        """
+        ファイル名から問題番号を抽出
+        
+        @param {string} filename - ファイル名
+        @return {string} 問題番号
+        """
+        # ファイル名から問題番号を抽出する正規表現
+        # 例: sample_page_001.md → 001
+        match = re.search(r'_page_(\d+)', filename)
+        if match:
+            return match.group(1)
+        
+        # 他のパターン: question_001.md → 001
+        match = re.search(r'[_-](\d+)', filename)
+        if match:
+            return match.group(1)
+        
+        # 数字だけの場合: 001.md → 001
+        match = re.search(r'^(\d+)', filename)
+        if match:
+            return match.group(1)
+        
+        # どのパターンにも一致しない場合は000を返す
+        return "000"
+    
+    def insert_markdown(self, file_path, year=None, question_id=None):
+        """
+        Markdownファイルをデータベースに挿入
+        
+        @param {string} file_path - Markdownファイルのパス
+        @param {number} year - 問題の年度（指定がない場合はインスタンス変数を使用）
+        @param {string} question_id - 問題ID（指定がない場合はファイル名から生成）
+        @return {boolean} 挿入が成功したかどうか
+        """
+        try:
+            # 年度の設定
+            if year is None:
+                year = self.year
             
+            # 問題IDの生成
+            if question_id is None:
+                # ファイル名から問題番号を抽出
+                file_name = os.path.basename(file_path)
+                question_number = self.extract_question_number(file_name)
+                
+                # 問題IDを生成（例: Q001）
+                question_id = f"{self.question_prefix}{question_number.zfill(3)}"
+            
+            # Markdownファイルの内容を読み込み
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            # データベースにINSERT
+            cursor = self.conn.cursor()
+            
+            # UPSERT（INSERT または UPDATE）
+            cursor.execute("""
+                INSERT INTO questions (question_id, year, content)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (question_id) 
+                DO UPDATE SET 
+                    year = EXCLUDED.year,
+                    content = EXCLUDED.content,
+                    updated_at = CURRENT_TIMESTAMP
+            """, (question_id, year, content))
+            
+            self.conn.commit()
+            self.logger.info(f"挿入完了: 問題ID={question_id}, 年度={year}, ファイル={file_path}")
             return True
             
         except Exception as e:
-            logger.error(f"インポートエラー: {str(e)}")
+            self.conn.rollback()
+            self.logger.error(f"データ挿入エラー（{file_path}）: {str(e)}")
             return False
     
-    def batch_import(self, folder_path, year):
+    def import_files(self):
         """
-        フォルダ内のすべてのMarkdownファイルをインポートします
+        指定されたパスからMarkdownファイルをインポート
         
-        Args:
-            folder_path (str): Markdownファイルを含むフォルダのパス
-            year (str): 年度
-            
-        Returns:
-            tuple: (成功件数, 失敗件数)
+        @return {dict} 処理結果の統計情報
         """
-        # フォルダの存在確認
-        if not os.path.exists(folder_path) or not os.path.isdir(folder_path):
-            logger.error(f"フォルダが見つかりません: {folder_path}")
-            return 0, 0
-        
-        # Markdownファイルのリストを取得
-        markdown_files = glob.glob(os.path.join(folder_path, "*.md"))
-        total_files = len(markdown_files)
-        
-        if total_files == 0:
-            logger.warning(f"インポート対象のMarkdownファイルが見つかりません: {folder_path}")
-            return 0, 0
-        
-        logger.info(f"バッチインポート開始: {folder_path} ({total_files}ファイル)")
-        
-        success_count = 0
-        failure_count = 0
-        
-        for file_path in markdown_files:
-            file_name = os.path.basename(file_path)
-            question_id = os.path.splitext(file_name)[0]
+        try:
+            # データベースに接続
+            self.conn = self.connect_db()
             
-            if self.import_markdown(file_path, year, question_id):
-                success_count += 1
-            else:
-                failure_count += 1
+            # テーブルが存在しない場合は作成
+            self.create_questions_table()
+            
+            # 結果カウンター
+            results = {
+                'success': 0,
+                'failure': 0,
+                'total': 0
+            }
+            
+            if os.path.isfile(self.input_path):
+                # 単一ファイルの場合
+                success = self.insert_markdown(self.input_path)
+                results['total'] = 1
+                if success:
+                    results['success'] = 1
+                else:
+                    results['failure'] = 1
+                    
+            elif os.path.isdir(self.input_path):
+                # ディレクトリの場合
+                input_dir = Path(self.input_path)
                 
-            logger.info(f"進捗: {success_count+failure_count}/{total_files} (成功: {success_count}, 失敗: {failure_count})")
-        
-        logger.info(f"バッチインポート完了: 成功={success_count}, 失敗={failure_count}")
-        return success_count, failure_count
+                # Markdownファイルのみを対象とする
+                md_files = [f for f in input_dir.glob('*.md')]
+                results['total'] = len(md_files)
+                
+                for md_file in sorted(md_files):
+                    self.logger.info(f"処理中: {md_file}")
+                    success = self.insert_markdown(str(md_file))
+                    if success:
+                        results['success'] += 1
+                    else:
+                        results['failure'] += 1
+                        
+            else:
+                self.logger.error(f"入力パスが見つかりません: {self.input_path}")
+            
+            # データベース接続を閉じる
+            self.conn.close()
+            
+            self.logger.info(f"インポート完了: 成功={results['success']}, 失敗={results['failure']}, 合計={results['total']}")
+            return results
+            
+        except Exception as e:
+            if self.conn:
+                self.conn.close()
+            self.logger.error(f"インポート処理でエラーが発生しました: {str(e)}")
+            raise
 
 
 def main():
-    """
-    コマンドライン引数を解析し、Markdownインポートを実行
-    """
-    parser = argparse.ArgumentParser(description='MarkdownファイルをPostgreSQLにインポートします')
-    parser.add_argument('path', help='Markdownファイルまたはフォルダのパス')
-    parser.add_argument('year', help='年度 (例: 2025)')
-    parser.add_argument('question_id', nargs='?', help='問題ID (例: Q001) - バッチモードでは不要')
-    parser.add_argument('--batch', '-b', action='store_true', help='バッチモード (フォルダ内の全ファイルを処理)')
-    parser.add_argument('--host', help='データベースホスト')
-    parser.add_argument('--port', help='データベースポート')
-    parser.add_argument('--dbname', help='データベース名')
-    parser.add_argument('--user', help='データベースユーザー')
-    parser.add_argument('--password', help='データベースパスワード')
+    """メイン関数"""
+    # ロギングの設定
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    logger = logging.getLogger(__name__)
+    
+    # コマンドライン引数の解析
+    parser = argparse.ArgumentParser(description='MarkdownファイルをDB（PostgreSQL/Aurora）にインポート')
+    parser.add_argument('input', help='入力Markdownファイルまたはディレクトリのパス')
+    parser.add_argument('--year', '-y', type=int, help='問題の年度（例: 2024）')
+    parser.add_argument('--prefix', '-p', default='Q', help='問題IDのプレフィックス（デフォルト: Q）')
+    parser.add_argument('--question-id', '-q', help='問題ID（指定時は年度とプレフィックスは無視）')
+    parser.add_argument('--no-create-table', action='store_true', help='テーブルを自動作成しない')
+    parser.add_argument('--batch', '-b', action='store_true', help='バッチモードで実行（ディレクトリ内の全ファイルを処理）')
     
     args = parser.parse_args()
     
-    # DB設定の準備
-    db_config = {}
-    if args.host:
-        db_config['host'] = args.host
-    if args.port:
-        db_config['port'] = args.port
-    if args.dbname:
-        db_config['database'] = args.dbname
-    if args.user:
-        db_config['user'] = args.user
-    if args.password:
-        db_config['password'] = args.password
-    
-    # インポーターの初期化
-    importer = MarkdownImporter(db_config)
-    
-    # バッチモードかどうかで処理を分岐
-    if args.batch or os.path.isdir(args.path):
-        importer.batch_import(args.path, args.year)
-    else:
-        if not args.question_id:
-            logger.error("単一ファイルモードでは問題IDが必要です")
-            return
+    try:
+        # バッチモードの場合は入力をディレクトリとして扱う
+        if args.batch and not os.path.isdir(args.input):
+            logger.error(f"バッチモードではディレクトリを指定してください: {args.input}")
+            return 1
         
-        importer.import_markdown(args.path, args.year, args.question_id)
+        # 単一ファイル+問題ID指定の場合
+        if not args.batch and os.path.isfile(args.input) and args.question_id:
+            # 単一ファイルのインポート
+            importer = MarkdownImporter(
+                input_path=args.input,
+                year=args.year,
+                question_prefix=args.prefix,
+                create_table=not args.no_create_table
+            )
+            
+            # データベースに接続
+            conn = importer.connect_db()
+            importer.conn = conn
+            
+            # テーブルの作成
+            importer.create_questions_table()
+            
+            # ファイルのインポート
+            success = importer.insert_markdown(
+                file_path=args.input,
+                year=args.year,
+                question_id=args.question_id
+            )
+            
+            # 接続を閉じる
+            conn.close()
+            
+            if success:
+                logger.info(f"ファイルを正常にインポートしました: {args.input} → 問題ID: {args.question_id}")
+                return 0
+            else:
+                logger.error(f"ファイルのインポートに失敗しました: {args.input}")
+                return 1
+        
+        else:
+            # 通常のインポート処理
+            importer = MarkdownImporter(
+                input_path=args.input,
+                year=args.year,
+                question_prefix=args.prefix,
+                create_table=not args.no_create_table
+            )
+            
+            results = importer.import_files()
+            
+            if results['failure'] > 0:
+                logger.warning(f"一部のファイルのインポートに失敗しました: 失敗={results['failure']}/{results['total']}")
+                return 1 if results['success'] == 0 else 0
+            else:
+                logger.info(f"全てのファイルが正常にインポートされました: {results['success']}/{results['total']}")
+                return 0
+        
+    except Exception as e:
+        logger.error(f"エラーが発生しました: {str(e)}")
+        return 1
 
 
 if __name__ == "__main__":
-    main() 
+    exit(main()) 

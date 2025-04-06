@@ -2,103 +2,129 @@
 # -*- coding: utf-8 -*-
 
 """
-PDFファイルを画像ファイル（PNG/JPEG）に変換するスクリプト
+PDFファイルをページごとに画像に変換するスクリプト
 
-このスクリプトは、指定されたPDFファイルをページごとに画像ファイルに変換します。
-Poppler（pdf2image）を使用してPDFを高解像度の画像に変換し、OCR処理に最適な
-画像ファイルを生成します。
+このスクリプトは、指定されたPDFファイルをPopplerを使用して
+ページごとに画像ファイル（PNG/JPEG）に変換します。
 
-要件:
-    - Poppler: PDFのレンダリングエンジン
-    - pdf2image: PopplerのPythonラッパー
+仕様:
+- 入力: PDFファイルパス
+- 出力: 画像ファイル（ページごと）
+- オプション: DPI設定、出力形式（PNG/JPEG）、出力ディレクトリ
 
-使用例:
-    python pdf_to_images.py input.pdf --output_dir ./images --dpi 300 --format png
+制限事項:
+- Popplerがシステムにインストールされている必要があります
+- 大きなPDFファイルは処理に時間がかかることがあります
 """
 
 import os
 import argparse
 from pdf2image import convert_from_path
+import logging
 
-
-def pdfToImages(pdf_path, output_dir=None, dpi=300, fmt='png', prefix=None):
+class PdfToImageConverter:
     """
-    PDFファイルをページごとに画像ファイルに変換します
-
-    Args:
-        pdf_path (str): 変換対象のPDFファイルのパス
-        output_dir (str, optional): 出力先ディレクトリ。指定がない場合はPDFと同じディレクトリ
-        dpi (int, optional): 出力画像の解像度（DPI）。デフォルトは300
-        fmt (str, optional): 出力画像のフォーマット（'png'または'jpeg'）。デフォルトは'png'
-        prefix (str, optional): 出力ファイル名のプレフィックス。指定がない場合はPDFのファイル名
-
-    Returns:
-        list: 生成された画像ファイルのパスのリスト
+    PDFファイルを画像に変換するクラス
+    
+    @param {string} pdf_path - 入力PDFファイルのパス
+    @param {string} output_dir - 出力画像を保存するディレクトリ
+    @param {number} dpi - 画像のDPI設定
+    @param {string} format - 出力画像のフォーマット（'png'または'jpeg'）
     """
-    # 出力ディレクトリの設定
-    if output_dir is None:
-        output_dir = os.path.dirname(pdf_path)
-    
-    # 出力ディレクトリがなければ作成
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
-    
-    # プレフィックスの設定
-    if prefix is None:
-        prefix = os.path.splitext(os.path.basename(pdf_path))[0]
-    
-    # PDFをページごとに画像に変換
-    try:
-        print(f"PDFを変換中: {pdf_path}")
-        print(f"解像度: {dpi} DPI, 形式: {fmt}")
+    def __init__(self, pdf_path, output_dir, dpi=300, format='png'):
+        self.pdf_path = pdf_path
+        self.output_dir = output_dir
+        self.dpi = dpi
+        self.format = format
         
-        images = convert_from_path(
-            pdf_path,
-            dpi=dpi,
-            fmt=fmt,
-            thread_count=os.cpu_count()
-        )
-        
-        # 画像を保存
-        output_paths = []
-        for i, image in enumerate(images):
-            page_num = i + 1
-            output_filename = f"{prefix}_page{page_num:02d}.{fmt}"
-            output_path = os.path.join(output_dir, output_filename)
+        # 出力ディレクトリが存在しない場合は作成
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
             
-            image.save(output_path)
-            output_paths.append(output_path)
-            print(f"ページ {page_num}/{len(images)} を保存: {output_path}")
+        # ベースファイル名（拡張子なし）を取得
+        self.base_filename = os.path.splitext(os.path.basename(pdf_path))[0]
         
-        print(f"変換完了: {len(images)}ページを{output_dir}に保存しました")
-        return output_paths
-    
-    except Exception as e:
-        print(f"エラー: PDFの変換に失敗しました: {str(e)}")
-        return []
-
+        # ロガーの設定
+        self.logger = logging.getLogger(__name__)
+        
+    def convert(self):
+        """
+        PDFを画像に変換する処理を実行
+        
+        @return {list} 生成された画像ファイルのパスリスト
+        """
+        try:
+            self.logger.info(f"PDFファイル「{self.pdf_path}」の変換を開始します...")
+            
+            # PDFを画像に変換
+            images = convert_from_path(
+                self.pdf_path, 
+                dpi=self.dpi, 
+                fmt=self.format
+            )
+            
+            # 生成されたファイルパスのリスト
+            output_files = []
+            
+            # 各ページを画像として保存
+            for i, image in enumerate(images):
+                # 出力ファイルパスを作成
+                output_file = os.path.join(
+                    self.output_dir, 
+                    f"{self.base_filename}_page_{i+1:03d}.{self.format}"
+                )
+                
+                # 画像を保存
+                image.save(output_file)
+                output_files.append(output_file)
+                
+                self.logger.info(f"ページ {i+1}/{len(images)} を {output_file} として保存しました")
+            
+            self.logger.info(f"PDFの変換が完了しました。合計 {len(images)} ページを変換しました。")
+            return output_files
+            
+        except Exception as e:
+            self.logger.error(f"PDF変換中にエラーが発生しました: {str(e)}")
+            raise
 
 def main():
-    """
-    コマンドライン引数を解析し、PDFを画像に変換する処理を実行します
-    """
-    parser = argparse.ArgumentParser(description='PDFをページごとに画像ファイルに変換します')
-    parser.add_argument('pdf_path', help='変換するPDFファイルのパス')
-    parser.add_argument('--output_dir', '-o', help='出力先ディレクトリ')
-    parser.add_argument('--dpi', '-d', type=int, default=300, help='出力画像の解像度（DPI）')
-    parser.add_argument('--format', '-f', choices=['png', 'jpeg'], default='png', help='出力画像のフォーマット')
-    parser.add_argument('--prefix', '-p', help='出力ファイル名のプレフィックス')
+    """メイン関数"""
+    # ロギングの設定
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    logger = logging.getLogger(__name__)
+    
+    # コマンドライン引数の解析
+    parser = argparse.ArgumentParser(description='PDFファイルを画像に変換')
+    parser.add_argument('pdf_file', help='入力PDFファイルのパス')
+    parser.add_argument('--output_dir', '-o', default='../data/images', 
+                        help='出力画像を保存するディレクトリ（デフォルト: ../data/images）')
+    parser.add_argument('--dpi', '-d', type=int, default=300, 
+                        help='画像のDPI設定（デフォルト: 300）')
+    parser.add_argument('--format', '-f', choices=['png', 'jpeg'], default='png', 
+                        help='出力画像のフォーマット（デフォルト: png）')
     
     args = parser.parse_args()
     
-    pdfToImages(
-        args.pdf_path,
-        args.output_dir,
-        args.dpi,
-        args.format,
-        args.prefix
-    )
-
+    try:
+        # PDFを画像に変換
+        converter = PdfToImageConverter(
+            pdf_path=args.pdf_file,
+            output_dir=args.output_dir,
+            dpi=args.dpi,
+            format=args.format
+        )
+        output_files = converter.convert()
+        
+        logger.info(f"変換完了: {len(output_files)} ファイルが {args.output_dir} に保存されました")
+        
+    except Exception as e:
+        logger.error(f"エラーが発生しました: {str(e)}")
+        return 1
+    
+    return 0
 
 if __name__ == "__main__":
-    main() 
+    exit(main()) 

@@ -1,256 +1,335 @@
 #!/bin/bash
 
-# OCRパイプラインの実行スクリプト
-# PDF→画像→OCR→Markdown→DBインポート→画像解析までの一連の処理を実行します
+# ====================================================================================
+# OCR + LLM + Markdown変換 + ベクターサーチ + マルチモーダル解析パイプライン実行スクリプト
+# ====================================================================================
+#
+# このスクリプトは、PDFからの画像変換、OCR処理、Markdown変換、
+# データベースへのインポート、マルチモーダル画像解析、エンベディング登録までの
+# 一連の処理を自動化します。
+#
+# 使用例:
+#   ./run_pipeline.sh path/to/document.pdf --use-llm --year 2024 --claude
+#
+# 作者: OCRプロジェクトチーム
+# ====================================================================================
 
-# 処理終了時に表示するメッセージ
-function finish {
-  echo "処理が終了しました"
-  exit 0
-}
+# スクリプトが存在するディレクトリを取得
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# プロジェクトのルートディレクトリを設定
+ROOT_DIR="$SCRIPT_DIR"
+# スクリプトディレクトリを設定
+SCRIPTS_DIR="$ROOT_DIR/scripts"
+# データディレクトリを設定
+DATA_DIR="$ROOT_DIR/data"
 
-# エラー時に表示するメッセージと終了
-function error_exit {
-  echo "エラー: $1" >&2
-  exit 1
-}
+# 各種データディレクトリ
+PDF_DIR="$DATA_DIR/pdf"
+IMAGES_DIR="$DATA_DIR/images"
+OCR_DIR="$DATA_DIR/ocr"
+MARKDOWN_DIR="$DATA_DIR/markdown"
+EMBEDDING_DIR="$DATA_DIR/embedding"
 
-# ヘルプの表示
-function show_help {
-  echo "使用方法: $0 <PDF_PATH> [OPTIONS]"
-  echo ""
-  echo "PDF→画像→OCR→Markdown→DBインポート→画像解析までの一連の処理を実行します"
-  echo ""
-  echo "オプション:"
-  echo "  -o, --output DIR      出力ディレクトリを指定します（デフォルト: data/）"
-  echo "  -d, --dpi NUM         画像変換時のDPI値を指定します（デフォルト: 300）"
-  echo "  -f, --format FORMAT   出力画像のフォーマットを指定します（png/jpeg、デフォルト: png）"
-  echo "  -y, --year YEAR       問題の年度を指定します（デフォルト: 2025）"
-  echo "  -q, --question ID     問題IDのプレフィックスを指定します（デフォルト: Q）"
-  echo "  -s, --skip-ocr        OCR処理をスキップします（既にOCRテキストがある場合）"
-  echo "  -c, --claude          Claude APIによる画像解析を有効にします"
-  echo "  -h, --help            このヘルプを表示します"
-  echo ""
-  exit 0
-}
+# デフォルト設定
+DEFAULT_DPI=300
+DEFAULT_FORMAT="png"
+DEFAULT_YEAR=2025
+DEFAULT_QUESTION_PREFIX="Q"
+DEFAULT_PARALLEL=4
 
-# 引数のパース
-PDF_PATH=""
-OUTPUT_DIR="data"
-DPI=300
-FORMAT="png"
-YEAR="2025"
-QUESTION_PREFIX="Q"
+# コマンドライン引数のパース
+PDF_FILE=""
+USE_LLM=false
+USE_CLAUDE=false
+USE_GEMINI=false
 SKIP_OCR=false
-RUN_CLAUDE=false
+SKIP_MARKDOWN=false
+SKIP_DB=false
+SKIP_EMBEDDING=false
+DPI=$DEFAULT_DPI
+FORMAT=$DEFAULT_FORMAT
+YEAR=$DEFAULT_YEAR
+QUESTION_PREFIX=$DEFAULT_QUESTION_PREFIX
+PARALLEL=$DEFAULT_PARALLEL
 
-# 引数が無ければヘルプを表示
+# ヘルプメッセージ
+function show_help {
+    echo "使用方法: $0 <pdf_file> [オプション]"
+    echo ""
+    echo "オプション:"
+    echo "  --output DIR        出力ディレクトリを指定（デフォルト: $DATA_DIR）"
+    echo "  --dpi NUM           画像変換時のDPI値を指定（デフォルト: $DEFAULT_DPI）"
+    echo "  --format FORMAT     出力画像のフォーマット（png/jpeg、デフォルト: $DEFAULT_FORMAT）"
+    echo "  --year YEAR         問題の年度を指定（デフォルト: $DEFAULT_YEAR）"
+    echo "  --prefix PREFIX     問題IDのプレフィックスを指定（デフォルト: $DEFAULT_QUESTION_PREFIX）"
+    echo "  --use-llm           OCRにLLMベースの処理を使用する"
+    echo "  --claude            画像解析にClaude APIを使用する"
+    echo "  --gemini            画像解析にGemini APIを使用する（デフォルト）"
+    echo "  --skip-ocr          OCR処理をスキップする（既にOCRデータがある場合）"
+    echo "  --skip-markdown     Markdown変換をスキップする"
+    echo "  --skip-db           DBインポートをスキップする"
+    echo "  --skip-embedding    エンベディング処理をスキップする"
+    echo "  --parallel NUM      並列処理数を指定（デフォルト: $DEFAULT_PARALLEL）"
+    echo "  --help              このヘルプを表示する"
+    echo ""
+    echo "例: $0 data/pdf/sample.pdf --use-llm --year 2024 --claude"
+    exit 1
+}
+
+# 引数がない場合はヘルプを表示
 if [ $# -eq 0 ]; then
-  show_help
+    show_help
 fi
 
-# 引数の解析
-while [ $# -gt 0 ]; do
-  case "$1" in
-    -o|--output)
-      OUTPUT_DIR="$2"
-      shift 2
-      ;;
-    -d|--dpi)
-      DPI="$2"
-      shift 2
-      ;;
-    -f|--format)
-      FORMAT="$2"
-      shift 2
-      ;;
-    -y|--year)
-      YEAR="$2"
-      shift 2
-      ;;
-    -q|--question)
-      QUESTION_PREFIX="$2"
-      shift 2
-      ;;
-    -s|--skip-ocr)
-      SKIP_OCR=true
-      shift
-      ;;
-    -c|--claude)
-      RUN_CLAUDE=true
-      shift
-      ;;
-    -h|--help)
-      show_help
-      ;;
-    *)
-      if [ -z "$PDF_PATH" ]; then
-        PDF_PATH="$1"
-      else
-        error_exit "不明な引数: $1"
-      fi
-      shift
-      ;;
-  esac
+# 最初の引数がPDFファイルパスの場合
+if [[ "$1" != --* && "$1" != "" ]]; then
+    PDF_FILE="$1"
+    shift
+fi
+
+# 残りの引数を解析
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --output)
+            DATA_DIR="$2"
+            PDF_DIR="$DATA_DIR/pdf"
+            IMAGES_DIR="$DATA_DIR/images"
+            OCR_DIR="$DATA_DIR/ocr"
+            MARKDOWN_DIR="$DATA_DIR/markdown"
+            EMBEDDING_DIR="$DATA_DIR/embedding"
+            shift 2
+            ;;
+        --dpi)
+            DPI="$2"
+            shift 2
+            ;;
+        --format)
+            FORMAT="$2"
+            shift 2
+            ;;
+        --year)
+            YEAR="$2"
+            shift 2
+            ;;
+        --prefix)
+            QUESTION_PREFIX="$2"
+            shift 2
+            ;;
+        --use-llm)
+            USE_LLM=true
+            shift
+            ;;
+        --claude)
+            USE_CLAUDE=true
+            shift
+            ;;
+        --gemini)
+            USE_GEMINI=true
+            shift
+            ;;
+        --skip-ocr)
+            SKIP_OCR=true
+            shift
+            ;;
+        --skip-markdown)
+            SKIP_MARKDOWN=true
+            shift
+            ;;
+        --skip-db)
+            SKIP_DB=true
+            shift
+            ;;
+        --skip-embedding)
+            SKIP_EMBEDDING=true
+            shift
+            ;;
+        --parallel)
+            PARALLEL="$2"
+            shift 2
+            ;;
+        --help)
+            show_help
+            ;;
+        *)
+            echo "エラー: 不明なオプション '$1'"
+            show_help
+            ;;
+    esac
 done
 
-# PDFパスの確認
-if [ -z "$PDF_PATH" ]; then
-  error_exit "PDFファイルを指定してください"
+# PDFファイルが指定されているか確認
+if [ -z "$PDF_FILE" ]; then
+    echo "エラー: PDFファイルを指定してください"
+    show_help
 fi
 
-if [ ! -f "$PDF_PATH" ]; then
-  error_exit "指定されたPDFファイルが存在しません: $PDF_PATH"
+# PDFファイルが存在するか確認
+if [ ! -f "$PDF_FILE" ]; then
+    echo "エラー: 指定されたPDFファイル '$PDF_FILE' が見つかりません"
+    exit 1
 fi
 
-# 出力ディレクトリのセットアップ
-PDF_NAME=$(basename "$PDF_PATH" .pdf)
-IMAGES_DIR="${OUTPUT_DIR}/images/${PDF_NAME}"
-OCR_DIR="${OUTPUT_DIR}/ocr/${PDF_NAME}"
-MARKDOWN_DIR="${OUTPUT_DIR}/markdown/${PDF_NAME}"
-CLAUDE_DIR="${OUTPUT_DIR}/claude/${PDF_NAME}"
+# 必要なディレクトリを作成
+mkdir -p "$PDF_DIR" "$IMAGES_DIR" "$OCR_DIR" "$MARKDOWN_DIR" "$EMBEDDING_DIR"
 
-mkdir -p "$IMAGES_DIR" "$OCR_DIR" "$MARKDOWN_DIR" "$CLAUDE_DIR"
+# PDFファイル名（拡張子なし）を取得
+PDF_BASENAME=$(basename "$PDF_FILE" .pdf)
 
-echo "===================================================="
-echo "OCRパイプライン開始"
-echo "===================================================="
-echo "入力PDF: $PDF_PATH"
-echo "出力ディレクトリ: $OUTPUT_DIR"
-echo "画像DPI: $DPI"
-echo "画像形式: $FORMAT"
-echo "問題年度: $YEAR"
-echo "問題IDプレフィックス: $QUESTION_PREFIX"
-echo "OCRスキップ: $SKIP_OCR"
-echo "Claude画像解析: $RUN_CLAUDE"
-echo "===================================================="
-echo ""
+# PDFファイルをコピー（まだデータディレクトリにない場合）
+if [ ! -f "$PDF_DIR/$PDF_BASENAME.pdf" ]; then
+    echo "PDFファイルをデータディレクトリにコピーします..."
+    cp "$PDF_FILE" "$PDF_DIR/$PDF_BASENAME.pdf"
+fi
 
-# ステップ1: PDF→画像変換
-echo "[ステップ1] PDF→画像変換を開始"
-python scripts/pdf_to_images.py "$PDF_PATH" --output_dir "$IMAGES_DIR" --dpi "$DPI" --format "$FORMAT" || error_exit "PDF→画像変換に失敗しました"
-echo "[ステップ1] PDF→画像変換が完了しました"
-echo ""
+echo "========================================================"
+echo "OCR + LLM + Markdown + ベクターサーチパイプライン"
+echo "========================================================"
+echo "処理対象: $PDF_FILE"
+echo "出力ディレクトリ: $DATA_DIR"
+echo "処理設定:"
+echo "  - DPI: $DPI"
+echo "  - 画像フォーマット: $FORMAT"
+echo "  - 年度: $YEAR"
+echo "  - 問題ID接頭辞: $QUESTION_PREFIX"
+echo "  - LLMベースOCR: $USE_LLM"
+echo "  - Claude画像解析: $USE_CLAUDE"
+echo "  - Gemini画像解析: $USE_GEMINI"
+echo "========================================================"
 
-# OCRのスキップ確認
-if [ "$SKIP_OCR" = true ]; then
-  echo "[ステップ2] OCR処理はスキップします"
-else
-  # ステップ2: 画像→OCR処理
-  echo "[ステップ2] 画像→OCR処理を開始"
-  
-  # 必要なディレクトリの確認
-  if [ ! -d "$IMAGES_DIR" ]; then
-    error_exit "画像ディレクトリが見つかりません: $IMAGES_DIR"
-  fi
-  
-  # 各画像に対してOCR処理を実行
-  for IMAGE_FILE in "$IMAGES_DIR"/*.$FORMAT; do
-    if [ ! -f "$IMAGE_FILE" ]; then
-      continue
+# PDFを画像に変換
+echo "ステップ1: PDFを画像に変換しています..."
+python "$SCRIPTS_DIR/pdf_to_images.py" "$PDF_DIR/$PDF_BASENAME.pdf" --output_dir "$IMAGES_DIR" --dpi "$DPI" --format "$FORMAT"
+
+if [ $? -ne 0 ]; then
+    echo "エラー: PDFの画像変換に失敗しました"
+    exit 1
+fi
+echo "PDF → 画像変換が完了しました"
+
+# OCR処理（スキップフラグがオフの場合）
+if [ "$SKIP_OCR" = false ]; then
+    echo "ステップ2: OCR処理を実行しています..."
+    
+    OCR_ARGS=("$IMAGES_DIR" "$OCR_DIR")
+    
+    if [ "$USE_LLM" = true ]; then
+        OCR_ARGS+=("--use-llm")
+        
+        if [ "$USE_CLAUDE" = true ]; then
+            OCR_ARGS+=("--llm-provider" "claude")
+            echo "LLMベースOCR（Claude）を使用します"
+        elif [ "$USE_GEMINI" = true ]; then
+            OCR_ARGS+=("--llm-provider" "gemini")
+            echo "LLMベースOCR（Gemini）を使用します"
+        else
+            OCR_ARGS+=("--llm-provider" "claude")
+            echo "LLMベースOCR（デフォルト: Claude）を使用します"
+        fi
+    else
+        echo "TesseractベースOCRを使用します"
     fi
     
-    IMAGE_NAME=$(basename "$IMAGE_FILE" .$FORMAT)
-    OCR_OUTPUT="$OCR_DIR/${IMAGE_NAME}.txt"
+    python "$SCRIPTS_DIR/ocr_engine.py" "${OCR_ARGS[@]}"
     
-    echo "OCR処理: $IMAGE_FILE"
-    tesseract "$IMAGE_FILE" "$OCR_DIR/${IMAGE_NAME}" -l jpn --dpi "$DPI" || error_exit "OCR処理に失敗しました: $IMAGE_FILE"
-    echo "OCR完了: $OCR_OUTPUT"
-  done
-  
-  echo "[ステップ2] 画像→OCR処理が完了しました"
-  echo ""
-fi
-
-# ステップ3: OCRテキスト→Markdown変換
-echo "[ステップ3] OCRテキスト→Markdown変換を開始"
-
-# 必要なディレクトリの確認
-if [ ! -d "$OCR_DIR" ]; then
-  error_exit "OCRテキストディレクトリが見つかりません: $OCR_DIR"
-fi
-
-# 各OCRテキストファイルに対してMarkdown変換を実行
-for OCR_FILE in "$OCR_DIR"/*.txt; do
-  if [ ! -f "$OCR_FILE" ]; then
-    continue
-  fi
-  
-  OCR_NAME=$(basename "$OCR_FILE" .txt)
-  MARKDOWN_OUTPUT="$MARKDOWN_DIR/${OCR_NAME}.md"
-  
-  echo "Markdown変換: $OCR_FILE"
-  python scripts/ocr_to_markdown.py "$OCR_FILE" "$MARKDOWN_OUTPUT" || error_exit "Markdown変換に失敗しました: $OCR_FILE"
-  echo "Markdown変換完了: $MARKDOWN_OUTPUT"
-done
-
-echo "[ステップ3] OCRテキスト→Markdown変換が完了しました"
-echo ""
-
-# ステップ4: Markdown→DBインポート
-echo "[ステップ4] Markdown→DBインポートを開始"
-
-# 必要なディレクトリの確認
-if [ ! -d "$MARKDOWN_DIR" ]; then
-  error_exit "Markdownディレクトリが見つかりません: $MARKDOWN_DIR"
-fi
-
-# 各Markdownファイルに対してDBインポートを実行
-for MARKDOWN_FILE in "$MARKDOWN_DIR"/*.md; do
-  if [ ! -f "$MARKDOWN_FILE" ]; then
-    continue
-  fi
-  
-  MARKDOWN_NAME=$(basename "$MARKDOWN_FILE" .md)
-  # Q001_page01 形式から Q001 のようなIDを抽出
-  QUESTION_ID=$(echo "$MARKDOWN_NAME" | cut -d '_' -f 1)
-  # プレフィックスが指定されている場合は置換
-  if [ -n "$QUESTION_PREFIX" ]; then
-    if [[ "$QUESTION_ID" != "$QUESTION_PREFIX"* ]]; then
-      QUESTION_ID="${QUESTION_PREFIX}${QUESTION_ID}"
+    if [ $? -ne 0 ]; then
+        echo "エラー: OCR処理に失敗しました"
+        exit 1
     fi
-  fi
-  
-  echo "DBインポート: $MARKDOWN_FILE (ID: $QUESTION_ID)"
-  python scripts/markdown_importer.py "$MARKDOWN_FILE" "$YEAR" "$QUESTION_ID" || error_exit "DBインポートに失敗しました: $MARKDOWN_FILE"
-  echo "DBインポート完了: $QUESTION_ID"
-done
-
-echo "[ステップ4] Markdown→DBインポートが完了しました"
-echo ""
-
-# ステップ5: Claude画像解析（オプション）
-if [ "$RUN_CLAUDE" = true ]; then
-  echo "[ステップ5] Claude画像解析を開始"
-  
-  # Claude API キーの確認
-  if [ -z "$CLAUDE_API_KEY" ]; then
-    error_exit "環境変数 CLAUDE_API_KEY が設定されていません"
-  fi
-  
-  # 必要なディレクトリの確認
-  if [ ! -d "$IMAGES_DIR" ]; then
-    error_exit "画像ディレクトリが見つかりません: $IMAGES_DIR"
-  fi
-  
-  # 画像解析の実行
-  echo "バッチ画像解析: $IMAGES_DIR"
-  python scripts/claude_image_analyzer.py --batch "$IMAGES_DIR" --output_dir "$CLAUDE_DIR" --save_to_db || error_exit "Claude画像解析に失敗しました"
-  echo "[ステップ5] Claude画像解析が完了しました"
-  echo ""
+    echo "OCR処理が完了しました"
 else
-  echo "[ステップ5] Claude画像解析はスキップします"
-  echo ""
+    echo "ステップ2: OCR処理はスキップされました"
 fi
 
-echo "===================================================="
-echo "処理完了サマリー:"
-echo "画像ファイル数: $(find "$IMAGES_DIR" -name "*.$FORMAT" | wc -l)"
-echo "OCRテキストファイル数: $(find "$OCR_DIR" -name "*.txt" | wc -l)"
-echo "Markdownファイル数: $(find "$MARKDOWN_DIR" -name "*.md" | wc -l)"
-if [ "$RUN_CLAUDE" = true ]; then
-  echo "Claude解析結果数: $(find "$CLAUDE_DIR" -name "*.json" | wc -l)"
+# Markdown変換（スキップフラグがオフの場合）
+if [ "$SKIP_MARKDOWN" = false ]; then
+    echo "ステップ3: OCRテキストをMarkdownに変換しています..."
+    python "$SCRIPTS_DIR/ocr_to_markdown.py" "$OCR_DIR" "$MARKDOWN_DIR" --image-base-path "../images"
+    
+    if [ $? -ne 0 ]; then
+        echo "エラー: Markdown変換に失敗しました"
+        exit 1
+    fi
+    echo "Markdown変換が完了しました"
+else
+    echo "ステップ3: Markdown変換はスキップされました"
 fi
-echo "===================================================="
 
-finish 
+# DBインポート（スキップフラグがオフの場合）
+if [ "$SKIP_DB" = false ]; then
+    echo "ステップ4: MarkdownをDBにインポートしています..."
+    python "$SCRIPTS_DIR/markdown_importer.py" --input "$MARKDOWN_DIR" --year "$YEAR" --prefix "$QUESTION_PREFIX"
+    
+    if [ $? -ne 0 ]; then
+        echo "エラー: DBインポートに失敗しました"
+        exit 1
+    fi
+    echo "DBインポートが完了しました"
+else
+    echo "ステップ4: DBインポートはスキップされました"
+fi
+
+# 画像解析・エンベディング取得（スキップフラグがオフの場合）
+if [ "$SKIP_EMBEDDING" = false ]; then
+    echo "ステップ5: 画像解析とエンベディング取得を実行しています..."
+    
+    if [ "$USE_CLAUDE" = true ]; then
+        echo "Claude APIを使用した画像解析を実行中..."
+        # Claudes APIバージョンの画像解析を実行（必要に応じて実装を追加）
+        echo "注：現在のスクリプトでは、ClaudeベースのAPIを直接サポートしていません。"
+        echo "代わりにGemini APIを使用します（互換性のためにモデル名を変更）"
+        
+        # ClaudeのAPIキーをチェック
+        if [ -z "$CLAUDE_API_KEY" ]; then
+            echo "警告: CLAUDE_API_KEYが設定されていないようです。.envファイルを確認してください。"
+        fi
+        
+        MODEL_NAME="claude-3-sonnet"
+    elif [ "$USE_GEMINI" = true ] || [ "$USE_CLAUDE" = false -a "$USE_GEMINI" = false ]; then
+        echo "Gemini APIを使用した画像解析を実行中..."
+        
+        # GeminiのAPIキーをチェック
+        if [ -z "$GEMINI_API_KEY" ]; then
+            echo "警告: GEMINI_API_KEYが設定されていないようです。.envファイルを確認してください。"
+        fi
+        
+        MODEL_NAME="gemini-pro-vision"
+    fi
+    
+    python "$SCRIPTS_DIR/gemini_image_analyzer.py" --input "$IMAGES_DIR" --output "$EMBEDDING_DIR" --model "$MODEL_NAME" --parallel "$PARALLEL"
+    
+    if [ $? -ne 0 ]; then
+        echo "エラー: 画像解析・エンベディング取得に失敗しました"
+        exit 1
+    fi
+    echo "画像解析・エンベディング取得が完了しました"
+    
+    echo "ステップ6: エンベディングをDBにインポートしています..."
+    python "$SCRIPTS_DIR/embed_importer.py" --input "$EMBEDDING_DIR" --table "embeddings"
+    
+    if [ $? -ne 0 ]; then
+        echo "エラー: エンベディングのDBインポートに失敗しました"
+        exit 1
+    fi
+    echo "エンベディングのDBインポートが完了しました"
+else
+    echo "ステップ5-6: 画像解析・エンベディング処理はスキップされました"
+fi
+
+echo "========================================================"
+echo "パイプライン処理が全て完了しました！"
+echo "========================================================"
+echo "処理結果:"
+echo "  - PDF → 画像: $IMAGES_DIR"
+echo "  - OCRテキスト: $OCR_DIR"
+echo "  - Markdown: $MARKDOWN_DIR"
+echo "  - エンベディング: $EMBEDDING_DIR"
+echo "  - データベース: questionsテーブルおよびembeddingsテーブル"
+echo ""
+echo "以下のSQLでベクターサーチを実行できます:"
+echo "SELECT q.question_id, q.year, q.content,"
+echo "       e.embedding <-> to_query_vector(:input_vector) AS distance"
+echo "  FROM questions q"
+echo "  JOIN embeddings e ON q.question_id = e.question_id"
+echo " ORDER BY distance ASC"
+echo " LIMIT 10;"
+echo "========================================================" 

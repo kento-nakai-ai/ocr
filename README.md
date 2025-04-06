@@ -1,32 +1,64 @@
-# OCR + Markdown変換 + DBインポート + 画像解析パイプライン
+# OCR + LLM(LLM-based OCR) + Markdown変換 + ベクターサーチ（Aurora） + マルチモーダル解析パイプライン
 
-このプロジェクトは、PDF形式の問題データからOCRによるテキスト抽出を行い、Markdown形式に整形し、PostgreSQLデータベースへインポートするワークフローを提供します。また、オプションでClaude APIを使用した画像解析機能も含まれています。
+このプロジェクトでは、PDF形式の問題データを中心に、以下のステップを経て学習データを構築・蓄積します。
+
+1. **PDF取得 → PDFページを画像化**  
+2. **OCR（ローカル or LLMベース）でテキスト抽出**  
+3. **Markdown整形（KaTeX数式や画像タグ対応）**  
+4. **PostgreSQL（またはAurora）へMarkdownデータをインポート**  
+5. **画像をGemini/ClaudeなどのマルチモーダルAPIへ渡し、埋め込み（Embedding）を取得**  
+6. **Embedding結果をDBに格納（ベクターサーチに対応）**  
+7. **得られたメタ情報を追加でDBに格納またはJSON化**  
+
+この一連のパイプラインにより、類似問題検索などの機能（マルチモーダルベースのベクターサーチ）を実現します。
 
 ## 機能概要
 
-1. PDFファイルのページごとの画像変換
-2. Tesseract OCRによるテキスト抽出
-3. OCRテキストのMarkdown形式への変換（数式KaTeX対応）
-4. MarkdownデータのPostgreSQLへのインポート
-5. （オプション）Claude APIを使用した画像解析
+1. **PDFファイルのページごとの画像変換**  
+   - `pdf_to_images.py`などでPopplerを用いてPDFから画像（PNG/JPEG）を生成
+2. **OCR処理**  
+   - **ローカルOCR（Tesseract）**  
+   - **LLMベースOCR（Gemini, Claude, GPT-4など）**  
+3. **Markdown変換（ocr_to_markdown.py）**  
+   - テキストをKaTeX数式や適切な画像タグに整形
+4. **PostgreSQL/Auroraにインポート（markdown_importer.py）**  
+   - `questions`テーブルなどにMarkdown形式の本文や年度、問題IDなどを格納
+5. **マルチモーダルAPI（Gemini等）で画像解析 & Embedding取得**  
+   - 画像をAPIに送信→テキスト/特徴量（ベクトル）を取得  
+   - もしくはテキスト＋画像の両方を入力し、マルチモーダル埋め込みを生成
+6. **Embedding結果をDBに格納**  
+   - Aurora PostgreSQLの場合、[pgvector拡張](https://github.com/pgvector/pgvector)などを利用可能  
+   - 類似度ベースの検索（ベクターサーチ）に活用
+7. **追加メタ情報の管理**  
+   - Gemini/Claude等から返却されるJSON形式の解析結果をDBに格納するか、別途JSONで保持するかを選択  
+   - 必要に応じて`metadata`テーブルを追加し、類似問題のIDやスコアなどを管理
 
 ## 前提条件
 
-以下のソフトウェア・ライブラリが必要です：
-
 ### システム要件
 - Python 3.8以上
-- Tesseract OCR（日本語モデル）
-- Poppler
-- PostgreSQL
+- Poppler（PDF→画像変換用）
+- PostgreSQL または Amazon Aurora (PostgreSQL互換)
+- （必要に応じて）Tesseract OCR
+  - 日本語モデル（`jpn.traineddata`）
 
-### Pythonパッケージ
-```
+### LLMベースOCR・画像解析（選択的に使用）
+- Gemini API（Googleの次世代マルチモーダルモデルを想定）
+- Claude API（Anthropic）
+- OpenAI API（GPT-4等）
+
+### Pythonパッケージ例
+
+```bash
 pip install pdf2image psycopg2-binary python-dotenv anthropic
+# LLM使用例:
+# pip install openai  # GPT-4等
+# pip install google-cloud-aiplatform  # 例: Vertex AI使用時など
 ```
 
 ### 環境変数
-`.env`ファイルをプロジェクトルートに作成し、以下の内容を設定してください：
+
+`.env`ファイルをプロジェクトルートに作成し、以下の内容を設定してください（例）:
 
 ```
 # データベース接続設定
@@ -38,122 +70,134 @@ DB_PASSWORD=your_password
 
 # Claude API（オプション）
 CLAUDE_API_KEY=your_claude_api_key
+
+# Gemini API（オプション）
+GEMINI_API_KEY=your_gemini_api_key
+
+# OpenAI API
+OPENAI_API_KEY=your_openai_api_key
 ```
 
 ## ディレクトリ構造
 
 ```
 .
-├── README.md            # このファイル
-├── run_pipeline.sh      # ワークフロー実行スクリプト
-├── .env                 # 環境変数設定ファイル（要作成）
-├── scripts/             # 各種Pythonスクリプト
-│   ├── pdf_to_images.py        # PDF→画像変換
-│   ├── ocr_to_markdown.py      # OCRテキスト→Markdown変換
-│   ├── markdown_importer.py    # Markdown→DBインポート
-│   └── claude_image_analyzer.py # Claude画像解析
-└── data/                # データファイル（自動生成）
-    ├── pdf/             # 元のPDFファイル
-    ├── images/          # 変換された画像
-    ├── ocr/             # OCRテキスト
-    ├── markdown/        # 変換されたMarkdown
-    └── claude/          # Claude解析結果
+├── README.md                     # このファイル
+├── run_pipeline.sh               # ワークフロー実行スクリプト
+├── .env                          # 環境変数設定ファイル（要作成）
+├── scripts/                      # 各種Pythonスクリプト
+│   ├── pdf_to_images.py               # [1] PDF→画像変換
+│   ├── ocr_engine.py                  # [2] OCR処理 (Tesseract/LLM)
+│   ├── ocr_to_markdown.py             # [3] テキスト→Markdown変換
+│   ├── markdown_importer.py           # [4] Markdown→DBインポート
+│   ├── gemini_image_analyzer.py       # [5] Geminiなどでマルチモーダル解析
+│   ├── embed_importer.py              # [6] Embedding情報をDB格納
+│   └── ...
+└── data/                         # データファイル（自動生成）
+    ├── pdf/                      # 元のPDFファイル
+    ├── images/                   # 画像化したファイル
+    ├── ocr/                      # OCRテキスト
+    ├── markdown/                 # 変換されたMarkdown
+    ├── embedding/                # 画像・テキスト埋め込み（ベクトル）
+    └── ...
 ```
+
+## パイプラインの流れ
+
+1. **[1] PDFを取得 → PDFページを画像化**  
+   - `pdf_to_images.py`でPopplerを呼び出し、ページ単位に画像を生成
+2. **[2] OCR処理**  
+   - `ocr_engine.py`を介してTesseractかLLMを選択  
+   - `--use-llm` オプションなどを指定してGemini/ClaudeのAPIを叩く
+3. **[3] OCRテキストをMarkdownへ変換**  
+   - `ocr_to_markdown.py` でKaTeX数式や画像タグを整形
+4. **[4] MarkdownをPostgreSQL/Auroraへインポート**  
+   - `markdown_importer.py` で `questions` テーブルにINSERT  
+   - 質問文、年度、問題IDなどを登録
+5. **[5] 画像解析 & 埋め込み取得（マルチモーダルAPI）**  
+   - `gemini_image_analyzer.py` (名前は例)で画像＋テキストをAPIへ送信  
+   - 埋め込み（ベクトル）を取得し、ローカルに`.npy`やJSON形式で保存
+6. **[6] ベクトル情報をDBへ格納**  
+   - `embed_importer.py`でPostgreSQL/Aurora(ポスグレ互換)のベクトル型カラムにINSERT  
+   - pgvector拡張などを用いてベクターサーチを可能にする
+7. **[7] メタ情報を追加でDB保存 or JSON管理**  
+   - 類似問題のスコアや補足データを`metadata`テーブルに入れる  
+   - またはJSONファイルで管理し、必要に応じてフロントエンドから読み込む
 
 ## 使い方
 
-### 1. 基本的な実行方法
+### 1. 基本的な実行
 
 ```bash
 ./run_pipeline.sh path/to/your/document.pdf
 ```
 
-これにより、PDFが画像に変換され、OCR処理、Markdown変換、DBインポートが順に実行されます。
+- 上記でステップ[1]～[4]が一括実行されます（OCRはデフォルトでTesseract）
 
-### 2. オプションの指定
+### 2. マルチモーダル解析・Embeddingインポート
 
 ```bash
-# DPIと出力ディレクトリを指定
-./run_pipeline.sh path/to/your/document.pdf --dpi 600 --output custom_output
-
-# OCR処理をスキップし、問題の年度を2024に設定
-./run_pipeline.sh path/to/your/document.pdf --skip-ocr --year 2024
-
-# Claude APIによる画像解析を有効化
-./run_pipeline.sh path/to/your/document.pdf --claude
+# Gemini/ClaudeなどのAPIを使って画像解析＆ベクトル取得
+python scripts/gemini_image_analyzer.py --input images/ --output embedding/
+# 得られたembeddingをDBに登録
+python scripts/embed_importer.py --input embedding/ --table embeddings
 ```
 
-使用可能なオプションの一覧：
+### 3. オプションの指定
 
-```
-  -o, --output DIR      出力ディレクトリを指定します（デフォルト: data/）
-  -d, --dpi NUM         画像変換時のDPI値を指定します（デフォルト: 300）
-  -f, --format FORMAT   出力画像のフォーマットを指定します（png/jpeg、デフォルト: png）
-  -y, --year YEAR       問題の年度を指定します（デフォルト: 2025）
-  -q, --question ID     問題IDのプレフィックスを指定します（デフォルト: Q）
-  -s, --skip-ocr        OCR処理をスキップします（既にOCRテキストがある場合）
-  -c, --claude          Claude APIによる画像解析を有効にします
-  -h, --help            このヘルプを表示します
-```
-
-### 3. 個別スクリプトの実行
-
-各スクリプトは個別に実行することもできます：
-
-#### PDF→画像変換
 ```bash
-python scripts/pdf_to_images.py input.pdf --output_dir ./images --dpi 300 --format png
+./run_pipeline.sh path/to/your/document.pdf \
+  --use-llm \
+  --dpi 600 \
+  --year 2024 \
+  --claude
 ```
 
-#### OCRテキスト→Markdown変換
-```bash
-python scripts/ocr_to_markdown.py input.txt output.md
+- `--use-llm`: OCRにLLM APIを使用
+- `--claude`: Claudeを画像解析にも使う  
+  （`gemini_image_analyzer.py`を呼び出すスクリプトに改変するなど）
+
+### 4. ベクターサーチ（Aurora/pgvector）
+
+Aurora（PostgreSQL互換）でpgvectorを有効化している場合は、以下のようなクエリで**類似検索**が可能です：
+
+```sql
+SELECT id, 
+       embedding <-> to_query_vector(:input_vector) AS distance
+  FROM embeddings
+ ORDER BY distance ASC
+ LIMIT 10;
 ```
 
-#### Markdown→DBインポート
-```bash
-# 単一ファイル
-python scripts/markdown_importer.py file.md 2025 "Q001"
-
-# バッチモード
-python scripts/markdown_importer.py --batch folder/ 2025
-```
-
-#### Claude画像解析
-```bash
-# 単一画像
-python scripts/claude_image_analyzer.py image.png --output result.json
-
-# バッチモード
-python scripts/claude_image_analyzer.py --batch folder/ --output_dir results/
-```
+(`to_query_vector(:input_vector)` はpgvectorの検索用関数の例)
 
 ## カスタマイズ
 
-### OCR→Markdown変換ルールの追加
-
-`scripts/ocr_to_markdown.py`の`OCRToMarkdownConverter`クラスにて、数式変換パターンや画像タグ変換パターンを編集・追加できます。
-
-```python
-# 数式変換パターン例
-self.math_patterns = [
-    # [SQRT(3)] → $\sqrt{3}$
-    (r'\[SQRT\((\d+)\)\]', r'$\\sqrt{\1}$'),
-    # 新しいパターンを追加する場合はここに追記
-    (r'\[NEW_PATTERN\]', r'$\\newcommand$')
-]
-```
-
-### Claude APIプロンプトのカスタマイズ
-
-`scripts/claude_image_analyzer.py`の`analyze_image`メソッドにて、画像解析用のプロンプトをカスタマイズできます。
+- **OCRエンジン切り替え**  
+  `ocr_engine.py` 内で `--use-llm` フラグに応じてTesseract / Gemini / Claude / GPT-4等を切り替え。  
+- **埋め込み格納**  
+  `embed_importer.py` 内で、ベクトル型カラム（pgvector拡張）へINSERTするSQLを定義。  
+- **メタ情報管理**  
+  複数のテーブルを使う・JSON型で管理するなど、要件に応じて変更
 
 ## トラブルシューティング
 
-- **OCR精度の問題**: 画像のDPIを上げる（300→600など）ことで改善されることがあります
-- **DB接続エラー**: `.env`ファイルのDB設定を確認してください
-- **Claude API接続エラー**: 環境変数`CLAUDE_API_KEY`を正しく設定してください
+- **OCR精度が低い**  
+  - DPIを高めに設定（300→600）  
+  - LLMベースOCRに切り替え  
+  - PDFがスキャン品質低下の場合、事前に画像補正を行う
+- **API接続エラー**  
+  - `.env`のAPIキー設定を再確認  
+  - レートリミットを超過している可能性  
+- **ベクター型が見つからない**  
+  - PostgreSQLの拡張（pgvectorなど）を有効化しているかチェック  
+  - Auroraのバージョン・設定確認
+
+## 参考リンク
+
+- [try-vertex-ai-multimodal-search (zenn.dev)](https://zenn.dev/longrun_jp/articles/try-vertex-ai-multimodal-search)  
+- [pgvector GitHub](https://github.com/pgvector/pgvector)
 
 ## ライセンス
 
-このプロジェクトはMITライセンスの下で公開されています。 # ocr
+このプロジェクトはMITライセンスの下で公開されています。
