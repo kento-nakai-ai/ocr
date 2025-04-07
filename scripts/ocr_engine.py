@@ -25,10 +25,7 @@ import logging
 import subprocess
 from pathlib import Path
 import base64
-import json
-import time
 from dotenv import load_dotenv
-import requests
 
 # .envファイルから環境変数を読み込む
 load_dotenv()
@@ -373,4 +370,4 @@ def main():
 
 
 if __name__ == "__main__":
-    exit(main()) 
+    exit(main())  
