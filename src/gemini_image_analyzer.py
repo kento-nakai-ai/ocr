@@ -7,6 +7,8 @@ Gemini APIを使用した画像解析・エンベディング取得スクリプ�
 このスクリプトは、Google Gemini APIを使用して画像を解析し、
 テキスト情報や埋め込みベクトル（Embedding）を取得します。
 取得したデータは、後でベクターサーチのためにデータベースに格納できます。
+また、マルチモーダルのエンベディングAPIを使用して、画像とテキストのセットから
+エンベディングを取得することも可能です。
 
 仕様:
 - 入力: 画像ファイルまたはディレクトリ、関連テキスト（オプション）
@@ -51,9 +53,10 @@ class GeminiImageAnalyzer:
     @param {number} embedding_dim - エンベディングの次元数
     @param {boolean} extract_text - テキスト抽出を行うかどうか
     @param {boolean} get_embedding - エンベディングを取得するかどうか
+    @param {boolean} use_multimodal_embedding - マルチモーダルエンベディングを使用するかどうか
     """
     def __init__(self, api_key=None, model_name="gemini-2.5-pro-exp-03-25", embedding_dim=1536, 
-                 extract_text=True, get_embedding=True):
+                 extract_text=True, get_embedding=True, use_multimodal_embedding=False):
         self.logger = logging.getLogger(__name__)
         
         # APIキーの設定
@@ -66,10 +69,12 @@ class GeminiImageAnalyzer:
         self.embedding_dim = embedding_dim
         self.extract_text = extract_text
         self.get_embedding = get_embedding
+        self.use_multimodal_embedding = use_multimodal_embedding
         
         # APIエンドポイント設定
         self.vision_api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
         self.embedding_api_url = "https://generativelanguage.googleapis.com/v1beta/models/embedding-001:embedContent"
+        self.multimodal_embedding_api_url = "https://generativelanguage.googleapis.com/v1beta/models/multimodalembedding@001:embedContent"
         
         # APIヘッダー設定
         self.headers = {
@@ -130,6 +135,7 @@ class GeminiImageAnalyzer:
                 os.makedirs(output_dir, exist_ok=True)
                 json_path = os.path.join(output_dir, f"{file_name}_analysis.json")
                 npy_path = os.path.join(output_dir, f"{file_name}_embedding.npy")
+                multimodal_npy_path = os.path.join(output_dir, f"{file_name}_multimodal_embedding.npy")
             
             # 結果格納用の辞書
             result = {
@@ -138,6 +144,7 @@ class GeminiImageAnalyzer:
                 "success": False,
                 "text_content": None,
                 "embedding": None,
+                "multimodal_embedding": None,
                 "error": None
             }
             
@@ -164,6 +171,8 @@ class GeminiImageAnalyzer:
                       - すべての選択肢（1～4番）を抽出する
                       - 解説がある場合は抽出する
                       - 正解がある場合は抽出する
+                      - 回路図や図表がある場合は「[図：（説明）]」の形式で記述する
+                      - 数式は適切なLaTeX形式で表現する
 
                     2. 以下の形式でJSONとして構造化する：
                       ```json
@@ -172,6 +181,9 @@ class GeminiImageAnalyzer:
                           {
                             "id": 1,
                             "question": "問題文...$Q = R I^2 t$...続く問題文",
+                            "has_circuit_diagram": true, 
+                            "circuit_description": "コンデンサとトランジスタを含む回路",
+                            "has_table": false,
                             "choices": [
                               {
                                 "number": 1,
@@ -272,6 +284,71 @@ class GeminiImageAnalyzer:
             
             # エンベディング取得（設定されている場合）
             if self.get_embedding and result["text_content"]:
+                if self.use_multimodal_embedding:
+                    # マルチモーダルエンベディングを取得（テキストと画像の両方を使用）
+                    self.logger.info(f"テキストと画像からマルチモーダルエンベディングを取得: {image_path}")
+                    
+                    # マルチモーダルエンベディング用のAPIリクエストのデータを構築
+                    multimodal_embedding_data = {
+                        "model": "multimodalembedding@001",
+                        "content": {
+                            "parts": [
+                                {"text": result["text_content"]},
+                                {
+                                    "inlineData": {
+                                        "mimeType": mime_type,
+                                        "data": image_data
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                    
+                    # リトライループ
+                    for attempt in range(retry_count):
+                        try:
+                            # APIリクエスト送信
+                            multimodal_embedding_response = requests.post(
+                                self.multimodal_embedding_api_url,
+                                headers=self.headers,
+                                json=multimodal_embedding_data
+                            )
+                            
+                            # レスポンスをチェック
+                            if multimodal_embedding_response.status_code != 200:
+                                self.logger.error(f"Multimodal Embedding API エラー ({attempt+1}/{retry_count}): {multimodal_embedding_response.status_code} {multimodal_embedding_response.text}")
+                                if attempt < retry_count - 1:
+                                    time.sleep(2 ** attempt)
+                                    continue
+                                else:
+                                    result["error"] = f"Multimodal Embedding API エラー: {multimodal_embedding_response.status_code} {multimodal_embedding_response.text}"
+                                    # テキストのみのエンベディングを続行するため、ここではreturnしない
+                            else:
+                                # レスポンスを解析
+                                multimodal_embedding_json = multimodal_embedding_response.json()
+                                
+                                if "embedding" not in multimodal_embedding_json or "values" not in multimodal_embedding_json["embedding"]:
+                                    self.logger.error(f"Multimodal Embedding API レスポンスに有効なデータがありません: {multimodal_embedding_json}")
+                                    if attempt < retry_count - 1:
+                                        time.sleep(2 ** attempt)
+                                        continue
+                                else:
+                                    # マルチモーダルエンベディング値を取得
+                                    result["multimodal_embedding"] = np.array(multimodal_embedding_json["embedding"]["values"], dtype=np.float32)
+                                    
+                                    # 出力ディレクトリが指定されている場合は保存
+                                    if output_dir and result["multimodal_embedding"] is not None:
+                                        np.save(multimodal_npy_path, result["multimodal_embedding"])
+                                    
+                                    break  # 成功したらループを抜ける
+                            
+                        except Exception as e:
+                            self.logger.error(f"Multimodal Embedding API処理中にエラーが発生しました ({attempt+1}/{retry_count}): {str(e)}")
+                            if attempt < retry_count - 1:
+                                time.sleep(2 ** attempt)
+                            # テキストのみのエンベディングを続行するため、ここではresultにエラーは設定しない
+                
+                # テキストのみのエンベディングも取得
                 self.logger.info(f"テキストからエンベディングを取得: {image_path}")
                 
                 # エンベディング用のAPIリクエストのデータを構築
@@ -329,7 +406,7 @@ class GeminiImageAnalyzer:
                             return result
             
             # 結果が取得できたかどうか
-            result["success"] = (result["text_content"] is not None) or (result["embedding"] is not None)
+            result["success"] = (result["text_content"] is not None) or (result["embedding"] is not None) or (result["multimodal_embedding"] is not None)
             
             # 結果をファイルに保存（出力ディレクトリが指定されている場合）
             if output_dir and result["success"]:
@@ -346,6 +423,10 @@ class GeminiImageAnalyzer:
                 # エンベディングベクトルを保存（numpy形式）
                 if result["embedding"] is not None:
                     np.save(npy_path, result["embedding"])
+                
+                # マルチモーダルエンベディングを保存（numpy形式）
+                if result["multimodal_embedding"] is not None:
+                    np.save(multimodal_npy_path, result["multimodal_embedding"])
             
             return result
         
@@ -357,6 +438,7 @@ class GeminiImageAnalyzer:
                 "success": False,
                 "text_content": None,
                 "embedding": None,
+                "multimodal_embedding": None,
                 "error": f"処理エラー: {str(e)}"
             }
     
@@ -460,6 +542,7 @@ def main():
     parser.add_argument('--model', default='gemini-2.5-pro-exp-03-25', help='使用するGeminiモデル（デフォルト: gemini-2.5-pro-exp-03-25）')
     parser.add_argument('--no-text', action='store_true', help='テキスト抽出を行わない')
     parser.add_argument('--no-embedding', action='store_true', help='エンベディングを取得しない')
+    parser.add_argument('--multimodal-embedding', action='store_true', help='マルチモーダルエンベディングを使用する')
     parser.add_argument('--api-key', help='Gemini APIキー（指定しない場合は環境変数から取得）')
     parser.add_argument('--parallel', '-p', type=int, default=4, help='並列処理のワーカー数（デフォルト: 4）')
     
@@ -487,7 +570,8 @@ def main():
             api_key=args.api_key,
             model_name=args.model,
             extract_text=not args.no_text,
-            get_embedding=not args.no_embedding
+            get_embedding=not args.no_embedding,
+            use_multimodal_embedding=args.multimodal_embedding
         )
         
         # 単一ファイルまたはディレクトリを処理
