@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OCR Markdown Preview</title>
+  
+  <!-- KaTeXライブラリ読み込み -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js"></script>
+  
+  <!-- Markdownパーサー -->
+  <script src="https://cdn.jsdelivr.net/npm/marked@4.0.2/marked.min.js"></script>
+  
+  <!-- スタイルシート -->
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-container">
+    <header>
+      <h1>OCR Markdown プレビュー</h1>
+      <div class="controls">
+        <select id="sample-selector">
+          <option value="">サンプルを選択...</option>
+          <option value="sample1">サンプル1：電気回路問題（ジュール熱）</option>
+          <option value="sample2">サンプル2：力率改善問題</option>
+          <option value="sample3">サンプル3：送電線のたるみ計算</option>
+          <option value="sample4">サンプル4：半導体問題</option>
+          <option value="sample5">サンプル5：RC回路応答問題</option>
+          <option value="sample6">サンプル6：統計的品質管理問題</option>
+          <option value="sample7">サンプル7：情報理論問題</option>
+          <option value="sample8">サンプル8：通信方式問題</option>
+          <option value="sample9">サンプル9：機械力学問題</option>
+          <option value="sample10">サンプル10：コンピュータ技術問題</option>
+        </select>
+        <div class="view-options">
+          <label>
+            <input type="radio" name="view-mode" value="preview" checked> プレビュー
+          </label>
+          <label>
+            <input type="radio" name="view-mode" value="markdown"> Markdown
+          </label>
+          <label>
+            <input type="radio" name="view-mode" value="json"> JSON
+          </label>
+        </div>
+        <div class="device-selector">
+          <button class="device-btn active" data-device="desktop">デスクトップ</button>
+          <button class="device-btn" data-device="tablet">タブレット</button>
+          <button class="device-btn" data-device="mobile">モバイル</button>
+        </div>
+      </div>
+    </header>
+    
+    <main>
+      <div class="preview-container">
+        <div id="preview-frame" class="desktop">
+          <div id="content"></div>
+        </div>
+      </div>
+      
+      <div class="info-panel">
+        <div class="panel-section">
+          <h3>表示情報</h3>
+          <div id="display-info">
+            <p>サンプルを選択してください</p>
+          </div>
+        </div>
+        <div class="panel-section">
+          <h3>チェックリスト</h3>
+          <ul class="checklist">
+            <li>
+              <label><input type="checkbox"> 数式が正しく表示されている</label>
+            </li>
+            <li>
+              <label><input type="checkbox"> 表が正しく整形されている</label>
+            </li>
+            <li>
+              <label><input type="checkbox"> 画像参照が正しく表示されている</label>
+            </li>
+            <li>
+              <label><input type="checkbox"> 問題の構造が視覚的に明確</label>
+            </li>
+            <li>
+              <label><input type="checkbox"> 選択肢が正しく表示されている</label>
+            </li>
+            <li>
+              <label><input type="checkbox"> レスポンシブデザインが機能している</label>
+            </li>
+          </ul>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script src="samples.js"></script>
+  <script src="preview.js"></script>
+</body>
+</html> 
