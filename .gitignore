@@ -1,0 +1,101 @@
+# 環境変数ファイル
+.env
+.env.local
+.env.development
+.env.test
+.env.production
+
+# Python関連
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+venv/
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Markdownファイル
+*.md
+!README.md
+!SETUP.md
+!CONTRIBUTING.md
+!LICENSE.md
+
+# データディレクトリ
+# アウトプットの内容はGitHubにプッシュするように変更
+data/*
+!data/.gitkeep
+!data/embedding/
+!data/markdown/
+!data/ocr/
+!data/images/
+!data/pdf/
+!data/claude/
+
+# データファイル
+data/embedding/**/*.npy
+data/embedding/**/*.json
+data/images/**/*.png
+data/ocr/**/*.txt
+data/pdf/**/*.pdf
+data/pdf/**/*.txt
+
+# macOS関連
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+# エディタの一時ファイル
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+*~
+.*.sw[a-p]
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# ログファイル
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# 認証ファイル
+y
+y.pub 
