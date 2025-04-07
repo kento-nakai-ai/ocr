@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ====================================================================================
-# OCR + LLM + Markdown変換 + ベクターサーチ + マルチモーダル解析パイプライン実行スクリプト
+# OCR + LLM + Markdown変換 + ベクターサーチ（Aurora） + マルチモーダル解析パイプライン実行スクリプト
 # ====================================================================================
 #
 # このスクリプトは、PDFからの画像変換、OCR処理、Markdown変換、
@@ -10,6 +10,8 @@
 #
 # 使用例:
 #   ./run_pipeline.sh path/to/document.pdf --use-llm --year 2024 --claude
+#   ./run_pipeline.sh path/to/document.pdf --direct-katex --year 2024
+#   ./run_pipeline.sh path/to/document.pdf --use-llm --gemini --multimodal-embedding
 #
 # 作者: OCRプロジェクトチーム
 # ====================================================================================
@@ -19,7 +21,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # プロジェクトのルートディレクトリを設定
 ROOT_DIR="$SCRIPT_DIR"
 # スクリプトディレクトリを設定
-SCRIPTS_DIR="$ROOT_DIR/scripts"
+SCRIPTS_DIR="$ROOT_DIR/src"
 # データディレクトリを設定
 DATA_DIR="$ROOT_DIR/data"
 
@@ -29,6 +31,8 @@ IMAGES_DIR="$DATA_DIR/images"
 OCR_DIR="$DATA_DIR/ocr"
 MARKDOWN_DIR="$DATA_DIR/markdown"
 EMBEDDING_DIR="$DATA_DIR/embedding"
+CLAUDE_DIR="$DATA_DIR/claude"
+GEMINI_DIR="$DATA_DIR/gemini"
 
 # デフォルト設定
 DEFAULT_DPI=300
@@ -37,292 +41,308 @@ DEFAULT_YEAR=2025
 DEFAULT_QUESTION_PREFIX="Q"
 DEFAULT_PARALLEL=4
 
-# コマンドライン引数のパース
-PDF_FILE=""
-USE_LLM=false
-USE_CLAUDE=false
-USE_GEMINI=false
-SKIP_OCR=false
-SKIP_MARKDOWN=false
-SKIP_DB=false
-SKIP_EMBEDDING=false
-DPI=$DEFAULT_DPI
-FORMAT=$DEFAULT_FORMAT
-YEAR=$DEFAULT_YEAR
-QUESTION_PREFIX=$DEFAULT_QUESTION_PREFIX
-PARALLEL=$DEFAULT_PARALLEL
+# デフォルト値の設定
+PDF_FILE="" # PDFファイルのパス
+OUTPUT_DIR="data" # 出力ディレクトリ
+DPI=$DEFAULT_DPI # 画像変換時のDPI
+FORMAT=$DEFAULT_FORMAT # 画像フォーマット
+YEAR=$DEFAULT_YEAR # 対象年度
+QUESTION_PREFIX=$DEFAULT_QUESTION_PREFIX # 問題IDのプレフィックス
+USE_LLM=false # LLMベースのOCRを使用するかどうか
+SKIP_OCR=false # OCR処理をスキップするかどうか
+SKIP_MARKDOWN=false # Markdown変換をスキップするかどうか
+SKIP_IMPORT=false # DBインポートをスキップするかどうか
+SKIP_ANALYSIS=false # 画像解析をスキップするかどうか
+SKIP_EMBEDDING=false # エンベディング生成をスキップするかどうか
+SKIP_EMBED_IMPORT=false # エンベディングインポートをスキップするかどうか
+PARALLEL=$DEFAULT_PARALLEL # 並列処理数
+USE_CLAUDE=false # Claude APIを使用するかどうか
+USE_GEMINI=true # Gemini APIを使用するかどうか（デフォルト）
+DIRECT_KATEX=false # 画像から直接KaTeX形式に変換するかどうか
+MULTIMODAL_EMBEDDING=false # マルチモーダルエンベディングを生成するかどうか
+NO_API=false # API呼び出しを使用せずダミーエンベディングを生成するかどうか
+SIMILARITY_COMPARE=false # エンベディング類似度比較を実行するかどうか
 
-# ヘルプメッセージ
+# ヘルプ表示関数
 function show_help {
-    echo "使用方法: $0 <pdf_file> [オプション]"
-    echo ""
-    echo "オプション:"
-    echo "  --output DIR        出力ディレクトリを指定（デフォルト: $DATA_DIR）"
-    echo "  --dpi NUM           画像変換時のDPI値を指定（デフォルト: $DEFAULT_DPI）"
-    echo "  --format FORMAT     出力画像のフォーマット（png/jpeg、デフォルト: $DEFAULT_FORMAT）"
-    echo "  --year YEAR         問題の年度を指定（デフォルト: $DEFAULT_YEAR）"
-    echo "  --prefix PREFIX     問題IDのプレフィックスを指定（デフォルト: $DEFAULT_QUESTION_PREFIX）"
-    echo "  --use-llm           OCRにLLMベースの処理を使用する"
-    echo "  --claude            画像解析にClaude APIを使用する"
-    echo "  --gemini            画像解析にGemini APIを使用する（デフォルト）"
-    echo "  --skip-ocr          OCR処理をスキップする（既にOCRデータがある場合）"
-    echo "  --skip-markdown     Markdown変換をスキップする"
-    echo "  --skip-db           DBインポートをスキップする"
-    echo "  --skip-embedding    エンベディング処理をスキップする"
-    echo "  --parallel NUM      並列処理数を指定（デフォルト: $DEFAULT_PARALLEL）"
-    echo "  --help              このヘルプを表示する"
-    echo ""
-    echo "例: $0 data/pdf/sample.pdf --use-llm --year 2024 --claude"
-    exit 1
+  echo "使用方法: $0 PDF_FILE [オプション]"
+  echo ""
+  echo "オプション:"
+  echo "  --output DIR         出力ディレクトリを指定（デフォルト: data）"
+  echo "  --skip-ocr           OCR処理をスキップ（すでにデータがある場合）"
+  echo "  --skip-markdown      Markdown変換をスキップ"
+  echo "  --skip-import        DBインポートをスキップ"
+  echo "  --skip-analysis      画像解析をスキップ"
+  echo "  --skip-embedding     エンベディング生成をスキップ"
+  echo "  --skip-embed-import  エンベディングのDBインポートをスキップ"
+  echo "  --use-llm            LLMベースのOCRを使用（デフォルト: Tesseract）"
+  echo "  --claude             画像解析にClaude APIを使用"
+  echo "  --gemini             画像解析にGemini APIを使用（デフォルト）"
+  echo "  --direct-katex       画像から直接KaTeX形式に変換（OCRをスキップ）"
+  echo "  --multimodal-embedding 画像とテキストを組み合わせたマルチモーダルエンベディングを生成"
+  echo "  --no-api             API呼び出しを使用せずダミーエンベディングを生成"
+  echo "  --similarity-compare エンベディング間の類似度比較を実行"
+  echo "  --year YEAR          対象年度を指定（デフォルト: 2025）"
+  echo "  --prefix PREFIX      問題IDのプレフィックスを指定（デフォルト: Q）"
+  echo "  --dpi DPI            画像変換時のDPI値を指定（デフォルト: 300）"
+  echo "  --format FORMAT      画像フォーマットを指定（png/jpeg、デフォルト: png）"
+  echo "  --parallel N         並列処理数を指定（デフォルト: 4）"
+  echo "  -h, --help           このヘルプを表示"
+  echo ""
+  echo "例:"
+  echo "  $0 data/pdf/sample.pdf --use-llm --year 2024 --gemini"
+  echo "  $0 data/pdf/sample.pdf --direct-katex --year 2024"
+  echo "  $0 data/pdf/sample.pdf --use-llm --gemini --multimodal-embedding"
+  echo "  $0 data/pdf/sample.pdf --use-llm --similarity-compare"
+  echo ""
+  exit 0
 }
 
-# 引数がない場合はヘルプを表示
-if [ $# -eq 0 ]; then
-    show_help
+# パラメータが1つも指定されていない場合、またはヘルプオプションが指定された場合はヘルプを表示
+if [ $# -eq 0 ] || [ "$1" == "-h" ] || [ "$1" == "--help" ]; then
+  show_help
 fi
 
-# 最初の引数がPDFファイルパスの場合
-if [[ "$1" != --* && "$1" != "" ]]; then
-    PDF_FILE="$1"
-    shift
+# 最初の引数をPDFファイルとして取得
+PDF_FILE="$1"
+shift
+
+# PDFファイルの存在確認
+if [ ! -f "$PDF_FILE" ]; then
+  echo "エラー: 指定されたPDFファイル '$PDF_FILE' が見つかりません。"
+  exit 1
 fi
 
-# 残りの引数を解析
-while [[ $# -gt 0 ]]; do
-    case "$1" in
-        --output)
-            DATA_DIR="$2"
-            PDF_DIR="$DATA_DIR/pdf"
-            IMAGES_DIR="$DATA_DIR/images"
-            OCR_DIR="$DATA_DIR/ocr"
-            MARKDOWN_DIR="$DATA_DIR/markdown"
-            EMBEDDING_DIR="$DATA_DIR/embedding"
-            shift 2
-            ;;
-        --dpi)
-            DPI="$2"
-            shift 2
-            ;;
-        --format)
-            FORMAT="$2"
-            shift 2
-            ;;
-        --year)
-            YEAR="$2"
-            shift 2
-            ;;
-        --prefix)
-            QUESTION_PREFIX="$2"
-            shift 2
-            ;;
-        --use-llm)
-            USE_LLM=true
-            shift
-            ;;
-        --claude)
-            USE_CLAUDE=true
-            shift
-            ;;
-        --gemini)
-            USE_GEMINI=true
-            shift
-            ;;
-        --skip-ocr)
-            SKIP_OCR=true
-            shift
-            ;;
-        --skip-markdown)
-            SKIP_MARKDOWN=true
-            shift
-            ;;
-        --skip-db)
-            SKIP_DB=true
-            shift
-            ;;
-        --skip-embedding)
-            SKIP_EMBEDDING=true
-            shift
-            ;;
-        --parallel)
-            PARALLEL="$2"
-            shift 2
-            ;;
-        --help)
-            show_help
-            ;;
-        *)
-            echo "エラー: 不明なオプション '$1'"
-            show_help
-            ;;
-    esac
+# オプション引数の解析
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --output)
+      OUTPUT_DIR="$2"
+      PDF_DIR="$OUTPUT_DIR/pdf"
+      IMAGES_DIR="$OUTPUT_DIR/images"
+      OCR_DIR="$OUTPUT_DIR/ocr"
+      MARKDOWN_DIR="$OUTPUT_DIR/markdown"
+      EMBEDDING_DIR="$OUTPUT_DIR/embedding"
+      CLAUDE_DIR="$OUTPUT_DIR/claude"
+      GEMINI_DIR="$OUTPUT_DIR/gemini"
+      shift 2
+      ;;
+    --skip-ocr)
+      SKIP_OCR=true
+      shift
+      ;;
+    --skip-markdown)
+      SKIP_MARKDOWN=true
+      shift
+      ;;
+    --skip-import)
+      SKIP_IMPORT=true
+      shift
+      ;;
+    --skip-analysis)
+      SKIP_ANALYSIS=true
+      shift
+      ;;
+    --skip-embedding)
+      SKIP_EMBEDDING=true
+      shift
+      ;;
+    --skip-embed-import)
+      SKIP_EMBED_IMPORT=true
+      shift
+      ;;
+    --use-llm)
+      USE_LLM=true
+      shift
+      ;;
+    --claude)
+      USE_CLAUDE=true
+      USE_GEMINI=false
+      shift
+      ;;
+    --gemini)
+      USE_GEMINI=true
+      USE_CLAUDE=false
+      shift
+      ;;
+    --direct-katex)
+      DIRECT_KATEX=true
+      SKIP_OCR=true # 直接KaTeX変換を使用する場合はOCRをスキップ
+      shift
+      ;;
+    --multimodal-embedding)
+      MULTIMODAL_EMBEDDING=true
+      shift
+      ;;
+    --no-api)
+      NO_API=true
+      shift
+      ;;
+    --similarity-compare)
+      SIMILARITY_COMPARE=true
+      shift
+      ;;
+    --year)
+      YEAR="$2"
+      shift 2
+      ;;
+    --prefix)
+      QUESTION_PREFIX="$2"
+      shift 2
+      ;;
+    --dpi)
+      DPI="$2"
+      shift 2
+      ;;
+    --format)
+      FORMAT="$2"
+      shift 2
+      ;;
+    --parallel)
+      PARALLEL="$2"
+      shift 2
+      ;;
+    *)
+      echo "エラー: 不明なオプション '$1'"
+      show_help
+      ;;
+  esac
 done
 
-# PDFファイルが指定されているか確認
-if [ -z "$PDF_FILE" ]; then
-    echo "エラー: PDFファイルを指定してください"
-    show_help
-fi
-
-# PDFファイルが存在するか確認
-if [ ! -f "$PDF_FILE" ]; then
-    echo "エラー: 指定されたPDFファイル '$PDF_FILE' が見つかりません"
-    exit 1
-fi
-
-# 必要なディレクトリを作成
+# 必要なディレクトリの作成
 mkdir -p "$PDF_DIR" "$IMAGES_DIR" "$OCR_DIR" "$MARKDOWN_DIR" "$EMBEDDING_DIR"
+mkdir -p "$CLAUDE_DIR" "$GEMINI_DIR"
 
-# PDFファイル名（拡張子なし）を取得
-PDF_BASENAME=$(basename "$PDF_FILE" .pdf)
+# PDFファイル名の取得（パスを除く）
+PDF_FILENAME=$(basename "$PDF_FILE")
+PDF_NAME="${PDF_FILENAME%.*}"
 
-# PDFファイルをコピー（まだデータディレクトリにない場合）
-if [ ! -f "$PDF_DIR/$PDF_BASENAME.pdf" ]; then
-    echo "PDFファイルをデータディレクトリにコピーします..."
-    cp "$PDF_FILE" "$PDF_DIR/$PDF_BASENAME.pdf"
-fi
+# ステップ1: PDFを画像に変換
+echo "ステップ1: PDFをページごとに画像に変換中..."
+python "$SCRIPTS_DIR/pdf_to_images.py" "$PDF_FILE" --output_dir "$IMAGES_DIR/$PDF_NAME" --dpi "$DPI" --format "$FORMAT"
+echo "  -> 変換完了: $IMAGES_DIR/$PDF_NAME"
 
-echo "========================================================"
-echo "OCR + LLM + Markdown + ベクターサーチパイプライン"
-echo "========================================================"
-echo "処理対象: $PDF_FILE"
-echo "出力ディレクトリ: $DATA_DIR"
-echo "処理設定:"
-echo "  - DPI: $DPI"
-echo "  - 画像フォーマット: $FORMAT"
-echo "  - 年度: $YEAR"
-echo "  - 問題ID接頭辞: $QUESTION_PREFIX"
-echo "  - LLMベースOCR: $USE_LLM"
-echo "  - Claude画像解析: $USE_CLAUDE"
-echo "  - Gemini画像解析: $USE_GEMINI"
-echo "========================================================"
-
-# PDFを画像に変換
-echo "ステップ1: PDFを画像に変換しています..."
-python "$SCRIPTS_DIR/pdf_to_images.py" "$PDF_DIR/$PDF_BASENAME.pdf" --output_dir "$IMAGES_DIR" --dpi "$DPI" --format "$FORMAT"
-
-if [ $? -ne 0 ]; then
-    echo "エラー: PDFの画像変換に失敗しました"
-    exit 1
-fi
-echo "PDF → 画像変換が完了しました"
-
-# OCR処理（スキップフラグがオフの場合）
+# ステップ2: OCR処理または直接KaTeX変換
 if [ "$SKIP_OCR" = false ]; then
-    echo "ステップ2: OCR処理を実行しています..."
-    
-    OCR_ARGS=("$IMAGES_DIR" "$OCR_DIR")
-    
-    if [ "$USE_LLM" = true ]; then
-        OCR_ARGS+=("--use-llm")
-        
-        if [ "$USE_CLAUDE" = true ]; then
-            OCR_ARGS+=("--llm-provider" "claude")
-            echo "LLMベースOCR（Claude）を使用します"
-        elif [ "$USE_GEMINI" = true ]; then
-            OCR_ARGS+=("--llm-provider" "gemini")
-            echo "LLMベースOCR（Gemini）を使用します"
-        else
-            OCR_ARGS+=("--llm-provider" "claude")
-            echo "LLMベースOCR（デフォルト: Claude）を使用します"
-        fi
-    else
-        echo "TesseractベースOCRを使用します"
-    fi
-    
-    python "$SCRIPTS_DIR/ocr_engine.py" "${OCR_ARGS[@]}"
-    
-    if [ $? -ne 0 ]; then
-        echo "エラー: OCR処理に失敗しました"
-        exit 1
-    fi
-    echo "OCR処理が完了しました"
-else
-    echo "ステップ2: OCR処理はスキップされました"
-fi
-
-# Markdown変換（スキップフラグがオフの場合）
-if [ "$SKIP_MARKDOWN" = false ]; then
-    echo "ステップ3: OCRテキストをMarkdownに変換しています..."
-    python "$SCRIPTS_DIR/ocr_to_markdown.py" "$OCR_DIR" "$MARKDOWN_DIR" --image-base-path "../images"
-    
-    if [ $? -ne 0 ]; then
-        echo "エラー: Markdown変換に失敗しました"
-        exit 1
-    fi
-    echo "Markdown変換が完了しました"
-else
-    echo "ステップ3: Markdown変換はスキップされました"
-fi
-
-# DBインポート（スキップフラグがオフの場合）
-if [ "$SKIP_DB" = false ]; then
-    echo "ステップ4: MarkdownをDBにインポートしています..."
-    python "$SCRIPTS_DIR/markdown_importer.py" --input "$MARKDOWN_DIR" --year "$YEAR" --prefix "$QUESTION_PREFIX"
-    
-    if [ $? -ne 0 ]; then
-        echo "エラー: DBインポートに失敗しました"
-        exit 1
-    fi
-    echo "DBインポートが完了しました"
-else
-    echo "ステップ4: DBインポートはスキップされました"
-fi
-
-# 画像解析・エンベディング取得（スキップフラグがオフの場合）
-if [ "$SKIP_EMBEDDING" = false ]; then
-    echo "ステップ5: 画像解析とエンベディング取得を実行しています..."
-    
+  echo "ステップ2: OCR処理中..."
+  OCR_CMD="python $SCRIPTS_DIR/ocr_engine.py $IMAGES_DIR/$PDF_NAME $OCR_DIR/$PDF_NAME"
+  
+  if [ "$USE_LLM" = true ]; then
+    OCR_CMD="$OCR_CMD --use-llm"
     if [ "$USE_CLAUDE" = true ]; then
-        echo "Claude APIを使用した画像解析を実行中..."
-        # Claudes APIバージョンの画像解析を実行（必要に応じて実装を追加）
-        echo "注：現在のスクリプトでは、ClaudeベースのAPIを直接サポートしていません。"
-        echo "代わりにGemini APIを使用します（互換性のためにモデル名を変更）"
-        
-        # ClaudeのAPIキーをチェック
-        if [ -z "$CLAUDE_API_KEY" ]; then
-            echo "警告: CLAUDE_API_KEYが設定されていないようです。.envファイルを確認してください。"
-        fi
-        
-        MODEL_NAME="claude-3-sonnet"
-    elif [ "$USE_GEMINI" = true ] || [ "$USE_CLAUDE" = false -a "$USE_GEMINI" = false ]; then
-        echo "Gemini APIを使用した画像解析を実行中..."
-        
-        # GeminiのAPIキーをチェック
-        if [ -z "$GEMINI_API_KEY" ]; then
-            echo "警告: GEMINI_API_KEYが設定されていないようです。.envファイルを確認してください。"
-        fi
-        
-        MODEL_NAME="gemini-pro-vision"
+      OCR_CMD="$OCR_CMD --llm-provider claude"
+    elif [ "$USE_GEMINI" = true ]; then
+      OCR_CMD="$OCR_CMD --llm-provider gemini"
     fi
-    
-    python "$SCRIPTS_DIR/gemini_image_analyzer.py" --input "$IMAGES_DIR" --output "$EMBEDDING_DIR" --model "$MODEL_NAME" --parallel "$PARALLEL"
-    
-    if [ $? -ne 0 ]; then
-        echo "エラー: 画像解析・エンベディング取得に失敗しました"
-        exit 1
-    fi
-    echo "画像解析・エンベディング取得が完了しました"
-    
-    echo "ステップ6: エンベディングをDBにインポートしています..."
-    python "$SCRIPTS_DIR/embed_importer.py" --input "$EMBEDDING_DIR" --table "embeddings"
-    
-    if [ $? -ne 0 ]; then
-        echo "エラー: エンベディングのDBインポートに失敗しました"
-        exit 1
-    fi
-    echo "エンベディングのDBインポートが完了しました"
-else
-    echo "ステップ5-6: 画像解析・エンベディング処理はスキップされました"
+  fi
+  
+  eval "$OCR_CMD"
+  echo "  -> OCR完了: $OCR_DIR/$PDF_NAME"
 fi
 
-echo "========================================================"
-echo "パイプライン処理が全て完了しました！"
-echo "========================================================"
+# ステップ3: Markdown変換
+if [ "$SKIP_MARKDOWN" = false ]; then
+  echo "ステップ3: OCRテキストをMarkdownに変換中..."
+  
+  if [ "$DIRECT_KATEX" = true ]; then
+    # 画像から直接KaTeX形式に変換する場合
+    for img_file in "$IMAGES_DIR/$PDF_NAME"/*.$FORMAT; do
+      base_name=$(basename "$img_file" .$FORMAT)
+      python "$SCRIPTS_DIR/ocr_to_markdown.py" "$img_file" "$MARKDOWN_DIR/$PDF_NAME/${base_name}.md" --direct-image-to-katex
+    done
+  else
+    # 通常のOCRテキストからMarkdownへの変換
+    python "$SCRIPTS_DIR/ocr_to_markdown.py" "$OCR_DIR/$PDF_NAME" "$MARKDOWN_DIR/$PDF_NAME" --image-base-path "../images/$PDF_NAME"
+  fi
+  
+  echo "  -> Markdown変換完了: $MARKDOWN_DIR/$PDF_NAME"
+fi
+
+# ステップ4: MarkdownをDBにインポート
+if [ "$SKIP_IMPORT" = false ]; then
+  echo "ステップ4: MarkdownをDBにインポート中..."
+  python "$SCRIPTS_DIR/markdown_importer.py" --input "$MARKDOWN_DIR/$PDF_NAME" --year "$YEAR" --prefix "$QUESTION_PREFIX"
+  echo "  -> DBインポート完了"
+fi
+
+# ステップ5: 画像解析（マルチモーダルAPI）
+if [ "$SKIP_ANALYSIS" = false ]; then
+  echo "ステップ5: 画像解析（マルチモーダルAPI）中..."
+  
+  if [ "$USE_CLAUDE" = true ]; then
+    ANALYSIS_CMD="python $SCRIPTS_DIR/claude_image_analyzer.py --input $IMAGES_DIR/$PDF_NAME --output $CLAUDE_DIR/$PDF_NAME"
+    eval "$ANALYSIS_CMD"
+    echo "  -> Claude APIによる画像解析完了: $CLAUDE_DIR/$PDF_NAME"
+  elif [ "$USE_GEMINI" = true ]; then
+    ANALYSIS_CMD="python $SCRIPTS_DIR/gemini_image_analyzer.py --input $IMAGES_DIR/$PDF_NAME --output $GEMINI_DIR/$PDF_NAME"
+    
+    if [ "$MULTIMODAL_EMBEDDING" = true ]; then
+      ANALYSIS_CMD="$ANALYSIS_CMD --multimodal-embedding"
+    fi
+    
+    eval "$ANALYSIS_CMD"
+    echo "  -> Gemini APIによる画像解析完了: $GEMINI_DIR/$PDF_NAME"
+  fi
+fi
+
+# ステップ6: エンベディング生成
+if [ "$SKIP_EMBEDDING" = false ] && [ "$MULTIMODAL_EMBEDDING" = false ]; then
+  echo "ステップ6: エンベディング生成中..."
+  
+  if [ "$USE_CLAUDE" = true ]; then
+    EMBEDDING_CMD="python $SCRIPTS_DIR/generate_embedding.py --input $CLAUDE_DIR/$PDF_NAME --dimension 1536 --parallel $PARALLEL"
+  else
+    EMBEDDING_CMD="python $SCRIPTS_DIR/generate_embedding.py --input $GEMINI_DIR/$PDF_NAME --dimension 1536 --parallel $PARALLEL"
+  fi
+  
+  if [ "$NO_API" = true ]; then
+    EMBEDDING_CMD="$EMBEDDING_CMD --no-api"
+  fi
+  
+  eval "$EMBEDDING_CMD"
+  echo "  -> エンベディング生成完了"
+fi
+
+# ステップ7: エンベディングをDBにインポート
+if [ "$SKIP_EMBED_IMPORT" = false ]; then
+  echo "ステップ7: エンベディングをDBにインポート中..."
+  
+  if [ "$USE_CLAUDE" = true ]; then
+    python "$SCRIPTS_DIR/embed_importer.py" --input "$CLAUDE_DIR/$PDF_NAME" --table embeddings
+  else
+    python "$SCRIPTS_DIR/embed_importer.py" --input "$GEMINI_DIR/$PDF_NAME" --table embeddings
+  fi
+  
+  echo "  -> エンベディングのDBインポート完了"
+fi
+
+# ステップ8: エンベディング類似度比較（オプション）
+if [ "$SIMILARITY_COMPARE" = true ]; then
+  echo "ステップ8: エンベディング類似度比較中..."
+  
+  if [ "$USE_CLAUDE" = true ]; then
+    python "$SCRIPTS_DIR/compare_similarity.py" --input "$CLAUDE_DIR/$PDF_NAME" --output "$OUTPUT_DIR/similarity_reports/$PDF_NAME"
+  else
+    python "$SCRIPTS_DIR/compare_similarity.py" --input "$GEMINI_DIR/$PDF_NAME" --output "$OUTPUT_DIR/similarity_reports/$PDF_NAME"
+  fi
+  
+  echo "  -> 類似度比較レポート生成完了: $OUTPUT_DIR/similarity_reports/$PDF_NAME"
+fi
+
+echo "パイプライン処理が完了しました！"
+echo "出力ディレクトリ: $OUTPUT_DIR"
 echo "処理結果:"
-echo "  - PDF → 画像: $IMAGES_DIR"
-echo "  - OCRテキスト: $OCR_DIR"
-echo "  - Markdown: $MARKDOWN_DIR"
-echo "  - エンベディング: $EMBEDDING_DIR"
+echo "  - PDF → 画像: $IMAGES_DIR/$PDF_NAME"
+echo "  - OCRテキスト: $OCR_DIR/$PDF_NAME"
+echo "  - Markdown: $MARKDOWN_DIR/$PDF_NAME"
+
+if [ "$USE_CLAUDE" = true ]; then
+  echo "  - 解析結果: $CLAUDE_DIR/$PDF_NAME"
+else
+  echo "  - 解析結果: $GEMINI_DIR/$PDF_NAME"
+fi
+
+echo "  - エンベディング: $EMBEDDING_DIR/$PDF_NAME"
 echo "  - データベース: questionsテーブルおよびembeddingsテーブル"
 echo ""
 echo "以下のSQLでベクターサーチを実行できます:"
