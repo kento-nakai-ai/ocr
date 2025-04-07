@@ -3,12 +3,15 @@
 このプロジェクトでは、PDF形式の問題データを中心に、以下のステップを経て学習データを構築・蓄積します。
 
 1. **PDF取得 → PDFページを画像化**  
-2. **OCR（ローカル or LLMベース）でテキスト抽出**  
+2. **OCR（ローカル or LLMベース）でテキスト抽出** または **画像から直接KaTeX形式に変換**  
 3. **Markdown整形（KaTeX数式や画像タグ対応）**  
 4. **PostgreSQL（またはAurora）へMarkdownデータをインポート**  
 5. **画像をGemini/ClaudeなどのマルチモーダルAPIへ渡し、解析結果を取得**  
    - **日本語試験問題を抽出し、JSON形式で構造化**
-6. **解析結果から埋め込み（Embedding）ベクトルを生成**  
+   - **回路図や表などの図形的要素も認識・構造化**
+6. **解析結果から埋め込み（Embedding）ベクトルを生成**
+   - **テキストのみのエンベディング**
+   - **マルチモーダルエンベディング（画像とテキストの組み合わせ）**
 7. **Embedding結果をDBに格納（ベクターサーチに対応）**  
 8. **得られたメタ情報を追加でDBに格納またはJSON化**  
 
@@ -18,9 +21,10 @@
 
 1. **PDFファイルのページごとの画像変換**  
    - `pdf_to_images.py`などでPopplerを用いてPDFから画像（PNG/JPEG）を生成
-2. **OCR処理**  
+2. **OCR処理または直接KaTeX変換**  
    - **ローカルOCR（Tesseract）**  
-   - **LLMベースOCR（Gemini 2.5 Pro, Claude 3.7 Sonnet, GPT-4など）**  
+   - **LLMベースOCR（Gemini 2.5 Pro, Claude 3.7 Sonnet, GPT-4など）**
+   - **画像から直接KaTeX形式への変換**（`ocr_to_markdown.py`の`--direct-image-to-katex`オプション）
 3. **Markdown変換（ocr_to_markdown.py）**  
    - テキストをKaTeX数式や適切な画像タグに整形
 4. **PostgreSQL/Auroraにインポート（markdown_importer.py）**  
@@ -30,6 +34,7 @@
    - `claude_image_analyzer.py`/`gemini_image_analyzer.py`で処理
    - **日本語試験問題の構造化抽出**：
      - 問題番号、問題文、選択肢、解説、正解などを自動認識
+     - 回路図や表などの図形的要素も検出・構造化
      - 以下のようなJSON形式で出力：
      ```json
      {
@@ -37,6 +42,9 @@
          {
            "id": 1,
            "question": "問題文...$Q = R I^2 t$...続く問題文",
+           "has_circuit_diagram": true, 
+           "circuit_description": "コンデンサとトランジスタを含む回路",
+           "has_table": false,
            "choices": [
              {
                "number": 1,
@@ -62,8 +70,10 @@
      }
      ```
 6. **埋め込みベクトル生成（generate_embedding.py）**  
-   - 解析結果JSONから埋め込みベクトルを生成
+   - 解析結果JSONからテキストのエンベディングを生成
+   - **マルチモーダルエンベディング生成**（画像とテキストを組み合わせた高度なエンベディング）
    - ベクトルをnumpy形式で保存
+   - 実際のGemini APIを使用した正確なエンベディング生成（`--no-api`オプションでダミーエンベディングにフォールバック可能）
 7. **Embedding結果をDBに格納（embed_importer.py）**  
    - Aurora PostgreSQLの場合、[pgvector拡張](https://github.com/pgvector/pgvector)などを利用可能  
    - 類似度ベースの検索（ベクターサーチ）に活用
@@ -202,10 +212,10 @@ OPENAI_API_KEY=your_openai_api_key
 ├── src/                          # 各種Pythonスクリプト
 │   ├── pdf_to_images.py               # [1] PDF→画像変換
 │   ├── ocr_engine.py                  # [2] OCR処理 (Tesseract/LLM)
-│   ├── ocr_to_markdown.py             # [3] テキスト→Markdown変換
+│   ├── ocr_to_markdown.py             # [3] テキスト→Markdown変換／画像→KaTeX変換
 │   ├── markdown_importer.py           # [4] Markdown→DBインポート
 │   ├── claude_image_analyzer.py       # [5a] Claudeを使った画像解析
-│   ├── gemini_image_analyzer.py       # [5b] Geminiを使った画像解析
+│   ├── gemini_image_analyzer.py       # [5b] Geminiを使った画像解析（マルチモーダルエンベディング対応）
 │   ├── generate_embedding.py          # [6] 解析結果からエンベディング生成
 │   ├── embed_importer.py              # [7] Embedding情報をDB格納
 │   ├── pdf2md_claude.py               # Claude 3.7 Sonnetを使ったPDF→Markdown変換
@@ -228,9 +238,10 @@ OPENAI_API_KEY=your_openai_api_key
 
 1. **[1] PDFを取得 → PDFページを画像化**  
    - `pdf_to_images.py`でPopplerを呼び出し、ページ単位に画像を生成
-2. **[2] OCR処理**  
+2. **[2] OCR処理 または 画像からの直接KaTeX変換**  
    - `ocr_engine.py`を介してTesseractかLLMを選択  
    - `--use-llm` オプションなどを指定してGemini/ClaudeのAPIを叩く
+   - または `ocr_to_markdown.py` の `--direct-image-to-katex` オプションで画像から直接KaTeX形式に変換
 3. **[3] OCRテキストをMarkdownへ変換**  
    - `ocr_to_markdown.py` でKaTeX数式や画像タグを整形
 4. **[4] MarkdownをPostgreSQL/Auroraへインポート**  
@@ -239,227 +250,70 @@ OPENAI_API_KEY=your_openai_api_key
 5. **[5] 画像解析（マルチモーダルAPI）**  
    - `claude_image_analyzer.py`または`gemini_image_analyzer.py`で画像をAPIへ送信  
    - 解析結果をJSON形式で保存
+   - `--multimodal-embedding`オプションを指定することでマルチモーダルエンベディングも生成
    - **日本語試験問題の構造化抽出**：
      - 問題番号、問題文、選択肢、解説、正解などを自動認識
-     - 以下のようなJSON形式で出力：
-     ```json
-     {
-       "problems": [
-         {
-           "id": 1,
-           "question": "問題文...$Q = R I^2 t$...続く問題文",
-           "choices": [
-             {
-               "number": 1,
-               "text": "選択肢1..."
-             },
-             {
-               "number": 2,
-               "text": "選択肢2..."
-             },
-             {
-               "number": 3,
-               "text": "選択肢3..."
-             },
-             {
-               "number": 4,
-               "text": "選択肢4..."
-             }
-           ],
-           "explanation": "解説文...$M = -e_2 \\frac{\\Delta t}{\\Delta i_1}$...続く解説文",
-           "correct_answer": 3
-         }
-       ]
-     }
-     ```
-6. **[6] 埋め込みベクトル（Embedding）生成**  
-   - `generate_embedding.py`でJSON解析結果から埋め込みベクトルを生成
-   - ベクトルをnumpy形式（.npy）で保存
-7. **[7] ベクトル情報をDBへ格納**  
-   - `embed_importer.py`でPostgreSQL/Aurora(ポスグレ互換)のベクトル型カラムにINSERT  
-   - pgvector拡張などを用いてベクターサーチを可能にする
-8. **[8] メタ情報を追加でDB保存 or JSON管理**  
-   - 類似問題のスコアや補足データを`metadata`テーブルに入れる  
-   - またはJSONファイルで管理し、必要に応じてフロントエンドから読み込む
+     - 回路図や表なども検出して構造化
+6. **[6] エンベディング生成**  
+   - `generate_embedding.py`で解析結果のテキストからエンベディングベクトルを生成  
+   - Gemini APIを使用した実際のエンベディング取得  
+   - またはマルチモーダルエンベディングを使用（`gemini_image_analyzer.py`から直接生成）
+7. **[7] エンベディングをDBに格納**  
+   - `embed_importer.py`でPostgreSQLなどにベクトルを保存
+8. **[8] メタデータ管理**  
+   - 必要に応じて追加のメタデータをDBに格納
 
-## 使い方
+## 主な機能の詳細
 
-### 1. 基本的な実行
+### 画像から直接KaTeX変換
+
+OCRテキストを経由せず、画像から直接KaTeX形式の数式を含むMarkdownを生成できます。
 
 ```bash
-./run_pipeline.sh path/to/your/document.pdf
+python src/ocr_to_markdown.py input_image.png output.md --direct-image-to-katex
 ```
 
-- 上記でステップ[1]～[8]が一括実行されます（OCRはデフォルトでTesseract）
+### マルチモーダルエンベディング生成
 
-### 2. サンプルページの抽出と処理
+テキストと画像の両方を考慮した高度なエンベディングを生成できます。回路図や図表を含む問題に特に効果的です。
 
 ```bash
-./extract_sample.sh path/to/your/document.pdf --use-llm [--claude|--gemini]
+python src/gemini_image_analyzer.py --input image.png --output output_dir --multimodal-embedding
 ```
 
-- PDFファイルからサンプルとして10ページを抽出してOCR処理を行います
-- 主なオプション:
-  - `--pages NUM`: 抽出するページ数（デフォルト：10）
-  - `--use-llm`: OCRにLLMベースの処理を使用する（必須）
-  - `--claude`: 画像解析にClaude 3.7 Sonnet APIを使用する
-  - `--gemini`: 画像解析にGemini 2.5 Pro APIを使用する（デフォルト）
-  - `--dpi NUM`: 画像変換時のDPI値（デフォルト：300）
-  - `--format FORMAT`: 画像フォーマット（png/jpeg、デフォルト：png）
+### 実APIベースのエンベディング生成
 
-### 3. 個別モジュールの実行
-
-各ステップを個別に実行することもできます：
+Gemini APIを使用して実際のエンベディングを生成します。より高精度な類似検索が可能になります。
 
 ```bash
-# [1] PDFから画像への変換
-python src/pdf_to_images.py data/pdf/example.pdf --output_dir data/images --dpi 300 --format png
-
-# [2] OCR処理（TesseractまたはLLM）
-python src/ocr_engine.py data/images data/ocr [--use-llm] [--llm-provider claude|gemini]
-
-# [3] OCRテキストをMarkdownへ変換
-python src/ocr_to_markdown.py data/ocr data/markdown --image-base-path "../images"
-
-# [4] MarkdownをDBへインポート
-python src/markdown_importer.py --input data/markdown --year 2024 --prefix "Q"
-
-# [5] 画像解析（Claude/Gemini）と日本語試験問題抽出
-python src/claude_image_analyzer.py --input data/images --output data/embedding
-# または
-python src/gemini_image_analyzer.py --input data/images --output data/embedding
-
-# [6] 埋め込みベクトル生成
-python src/generate_embedding.py --input data/embedding --dimension 1536 --parallel 4
-
-# [7] エンベディングをDBにインポート
-python src/embed_importer.py --input data/embedding --table embeddings
+python src/generate_embedding.py --input analysis_results.json --api-key your_api_key
 ```
 
-### 4. オプションの指定
+API呼び出しを避けたい場合は、ダミーエンベディングにフォールバックすることも可能です：
 
 ```bash
-./run_pipeline.sh path/to/your/document.pdf \
-  --use-llm \
-  --dpi 600 \
-  --year 2024 \
-  --claude
+python src/generate_embedding.py --input analysis_results.json --no-api
 ```
 
-- `--use-llm`: OCRにLLM APIを使用
-- `--claude`: Claude APIを画像解析に使用
-- `--dpi 600`: 高解像度でPDFを画像に変換
+## 使用例
 
-### 5. 日本語試験問題抽出機能
-
-日本語の試験問題を画像から抽出し、構造化された形式に変換します：
+### 基本的なパイプライン実行
 
 ```bash
-# Claudeを使った画像からの問題抽出
-python src/claude_image_analyzer.py 問題画像.png --output output.json
-
-# または、Geminiを使った画像からの問題抽出
-python src/gemini_image_analyzer.py --input 問題画像.png --output ./出力ディレクトリ
+./run_pipeline.sh data/pdf/sample.pdf --use-llm --year 2024 --gemini
 ```
 
-出力されるJSONは以下の形式になります：
+### 画像から直接KaTeX変換を使用
 
-```json
-{
-  "problems": [
-    {
-      "id": 1,
-      "question": "問題文...$Q = R I^2 t$...続く問題文",
-      "choices": [
-        {
-          "number": 1,
-          "text": "選択肢1..."
-        },
-        {
-          "number": 2,
-          "text": "選択肢2..."
-        },
-        {
-          "number": 3,
-          "text": "選択肢3..."
-        },
-        {
-          "number": 4,
-          "text": "選択肢4..."
-        }
-      ],
-      "explanation": "解説文...$M = -e_2 \\frac{\\Delta t}{\\Delta i_1}$...続く解説文",
-      "correct_answer": 3
-    }
-  ]
-}
+```bash
+./run_pipeline.sh data/pdf/sample.pdf --direct-katex --year 2024
 ```
 
-この構造化データは以下の特徴を持っています：
-- 問題番号、問題文、選択肢、解説、正解を体系的に整理
-- 数式はKaTeX構文で表現（インライン数式は $...$ で囲む）
-- 図表は `[figure_N]` 形式で表現
-- 不完全な問題は出力から除外
+### マルチモーダルエンベディングを生成
 
-### 6. ベクターサーチ（Aurora/pgvector）
-
-Aurora（PostgreSQL互換）でpgvectorを有効化している場合は、以下のようなクエリで**類似検索**が可能です：
-
-```sql
-SELECT id, 
-       embedding <-> to_query_vector(:input_vector) AS distance
-  FROM embeddings
- ORDER BY distance ASC
- LIMIT 10;
+```bash
+./run_pipeline.sh data/pdf/sample.pdf --use-llm --gemini --multimodal-embedding
 ```
-
-(`to_query_vector(:input_vector)` はpgvectorの検索用関数の例)
-
-## LLMモデル情報
-
-### Claude 3.7 Sonnet
-- 最新のAnthropicのモデル
-- モデルID: `claude-3-7-sonnet-20240307`
-- PDFネイティブ対応（最新のAPIベータ機能）
-- 最大入力トークン: 200K
-
-### Gemini 2.5 Pro
-- 最新のGoogleのマルチモーダルモデル
-- モデルID: `gemini-2.5-pro`
-- 画像、PDFの高精度な認識が可能
-- 最大入力トークン: 1M (百万トークン)
-
-## カスタマイズ
-
-- **OCRエンジン切り替え**  
-  `ocr_engine.py` 内で `--use-llm` フラグに応じてTesseract / Gemini / Claude / GPT-4等を切り替え。  
-- **画像解析プロンプト変更**  
-  `claude_image_analyzer.py`や`gemini_image_analyzer.py`内のプロンプト部分を編集して、異なる形式や目的に応じた抽出が可能。
-- **埋め込み生成**  
-  `generate_embedding.py` 内で、実際のAPIから取得した埋め込みベクトルに置き換えることが可能。  
-- **埋め込み格納**  
-  `embed_importer.py` 内で、ベクトル型カラム（pgvector拡張）へINSERTするSQLを定義。  
-- **メタ情報管理**  
-  複数のテーブルを使う・JSON型で管理するなど、要件に応じて変更
-
-## トラブルシューティング
-
-- **OCR精度が低い**  
-  - DPIを高めに設定（300→600）  
-  - LLMベースOCRに切り替え  
-  - PDFがスキャン品質低下の場合、事前に画像補正を行う
-- **API接続エラー**  
-  - `.env`のAPIキー設定を再確認  
-  - レートリミットを超過している可能性  
-- **ベクター型が見つからない**  
-  - PostgreSQLの拡張（pgvectorなど）を有効化しているかチェック  
-  - Auroraのバージョン・設定確認
-- **エンベディング生成エラー**  
-  - JSONファイルのフォーマットを確認
-  - 必要なフィールド（text_contentなど）が存在するか確認
-- **JSON構造化エラー**
-  - 画像の解像度を上げてみる
-  - 複雑すぎる問題や図表が多い場合は、より高性能なモデル（Claude-3-Opus等）を使用する
 
 ## 参考リンク
 

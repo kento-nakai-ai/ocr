@@ -42,33 +42,15 @@ htmlcov/
 !LICENSE.md
 
 # データディレクトリ
-# ディレクトリ構造のみ保持し、実際のデータファイルは除外
+# アウトプットの内容はGitHubにプッシュするように変更
 data/*
 !data/.gitkeep
-
-# 各サブディレクトリの構造は保持
 !data/embedding/
 !data/markdown/
 !data/ocr/
 !data/images/
 !data/pdf/
 !data/claude/
-
-# 各サブディレクトリ内のデータファイルは除外
-data/embedding/*
-data/markdown/*
-data/ocr/*
-data/images/*
-data/pdf/*
-data/claude/*
-
-# 各サブディレクトリに.gitkeepファイルを保持
-!data/embedding/.gitkeep
-!data/markdown/.gitkeep
-!data/ocr/.gitkeep
-!data/images/.gitkeep
-!data/pdf/.gitkeep
-!data/claude/.gitkeep
 
 # macOS関連
 .DS_Store
@@ -104,8 +86,4 @@ logs
 *.log
 npm-debug.log*
 yarn-debug.log*
-yarn-error.log*
-
-# SSHキー
-y
-y.pub 
+yarn-error.log* 

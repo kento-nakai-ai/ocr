@@ -21,8 +21,8 @@ from google.api_core.exceptions import GoogleAPIError
 # 環境変数の読み込み
 load_dotenv()
 
-MODEL_NAME = "gemini-2.5-pro"
-MODEL_NAME_FOR_OUTPUT = "gemini-2.5-pro"
+MODEL_NAME = "gemini-2.5-pro-exp-03-25"
+MODEL_NAME_FOR_OUTPUT = "gemini-2.5-pro-exp-03-25"
 API_KEY = os.getenv("GEMINI_API_KEY", "your_api_key_here")
 SYSTEM_PROMPT = "このPDFの内容を余すことなくmarkdown形式に変換してください。また、内容はまとめないでオリジナルの内容をそのまま複写することを意識してください。出力はmarkdown形式のみ、不要な出力はしないでください。"
 
