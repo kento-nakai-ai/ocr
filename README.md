@@ -81,6 +81,62 @@
    - Gemini/Claude等から返却されるJSON形式の解析結果をDBに格納するか、別途JSONで保持するかを選択  
    - 必要に応じて`metadata`テーブルを追加し、類似問題のIDやスコアなどを管理
 
+## データベース（PostgreSQL/Aurora）
+
+このプロジェクトではPostgreSQLデータベースを使用して、問題データとエンベディングベクトルを格納します。データベース関連の詳細な情報は[db/README.md](db/README.md)を参照してください。
+
+### データベース構造
+
+主要テーブルの構造を簡単に示します：
+
+```
+questions（問題テーブル）
+- id: 自動生成される整数型主キー
+- question_id: 問題ID（例：R04001）
+- year: 問題の年度
+- content: 問題の内容（Markdown形式）
+- created_at: 作成日時
+- updated_at: 更新日時
+
+embeddings（エンベディングテーブル）
+- id: 自動生成される整数型主キー
+- question_id: 関連する問題ID（questionsテーブルへの外部キー）
+- embedding_type: エンベディングのタイプ（例：text）
+- embedding: 768次元のエンベディングベクトル
+- metadata: エンベディングに関する追加情報（JSONB）
+- created_at: 作成日時
+```
+
+### データベースのバックアップと共有
+
+チーム内でデータベースの状態を共有するには、以下のコマンドでダンプファイルを作成できます：
+
+```bash
+pg_dump -U <username> -d questions_db -f db/backups/questions_db_backup.sql
+```
+
+ダンプからデータベースを復元するには：
+
+```bash
+psql -U <username> -d questions_db -f db/backups/questions_db_backup.sql
+```
+
+### ベクトル検索（類似問題検索）
+
+pgvector拡張を使用して、類似問題の検索ができます。例えば以下のようなSQLクエリで実現できます：
+
+```sql
+SELECT q2.question_id, q2.content, 
+       1 - (e1.embedding <=> e2.embedding) AS similarity
+FROM questions q1
+JOIN embeddings e1 ON q1.question_id = e1.question_id
+JOIN embeddings e2 ON e1.id != e2.id
+JOIN questions q2 ON e2.question_id = q2.question_id
+WHERE q1.question_id = 'R04001'
+ORDER BY similarity DESC
+LIMIT 5;
+```
+
 ## 前提条件
 
 ### システム要件
