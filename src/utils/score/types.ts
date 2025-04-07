@@ -75,4 +75,44 @@ export interface ScoreResult {
       [QuestionDifficulty.HIGH]: number;
     };
   };
+}
+
+/**
+ * 頻出問題データの型定義
+ */
+export interface FrequentlyAskedQuestionData {
+  id: string;
+  content: string;
+  yearList: string[];
+  accuracy: number;
+  expertScore: number;
+}
+
+/**
+ * 頻出問題スコア計算の結果
+ */
+export interface FrequentlyAskedScoreResult {
+  questionId: string;
+  frequencyScore: number;
+  accuracyScore: number;
+  expertScore: number;
+  yearBonus: number;
+  finalScore: number;
+  yearList: string[];
+  isEveryYear: boolean;
+}
+
+/**
+ * 頻出問題スコア計算設定
+ */
+export interface FrequentlyAskedScoreConfig {
+  FREQUENCY_WEIGHT: number;
+  ACCURACY_WEIGHT: number;
+  EXPERT_WEIGHT: number;
+  EVERY_YEAR_BONUS: number;
+  ALMOST_EVERY_YEAR_BONUS: {
+    [year: number]: number;
+  };
+  YEARS_TO_CONSIDER: number;
+  DECIMAL_PLACES: number;
 } 

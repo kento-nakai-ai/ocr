@@ -1,0 +1,5 @@
+{
+  "image_path": "data/images/似てない問題/令和5年度_page_058.png",
+  "file_name": "令和5年度_page_058",
+  "text_content": "```json\n{\n  \"problems\": [\n    {\n      \"id\": 61,\n      \"question\": \"図のネットワーク工程表において、クリティカルパスの日数（所要工期）として、正しいものはどれか。\\nただし、○内の数字はイベント番号、アルファベットは作業名、日数は所要日数を示す。\",\n      \"has_circuit_diagram\": true,\n      \"circuit_description\": \"ノードと矢印で表現されたネットワーク図。各ノードは丸で囲まれた数字（イベント番号）で表され、矢印は作業（アルファベットと所要日数）を表す。\",\n      \"has_table\": false,\n      \"choices\": [\n        {\n          \"number\": 1,\n          \"text\": \"27日\"\n        },\n        {\n          \"number\": 2,\n          \"text\": \"28日\"\n        },\n        {\n          \"number\": 3,\n          \"text\": \"29日\"\n        },\n        {\n          \"number\": 4,\n          \"text\": \"30日\"\n        },\n        {\n          \"number\": 5,\n          \"text\": \"31日\"\n        }\n      ],\n      \"explanation\": null,\n      \"correct_answer\": 4\n    }\n  ]\n}\n```"
+}

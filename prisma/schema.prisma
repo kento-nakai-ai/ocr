@@ -1,268 +1,304 @@
+/// Prismaクライアントの生成設定
 generator client {
-  provider = "prisma-client-js"
+  provider = "prisma-client-js" /// Prismaクライアントを生成するためのプロバイダ
 }
 
+/// ERD(Entity Relationship Diagram)の生成設定
 generator erd {
-  provider                  = "prisma-erd-generator"
-  output                    = "./ERD.md"
-  includeRelationFromFields = true
-  disableEmoji              = true
+  provider                  = "prisma-erd-generator" /// ERD生成のプロバイダ
+  output                    = "./ERD.md" /// 出力先ファイル
+  includeRelationFromFields = true /// リレーションフィールドを含める
+  disableEmoji              = true /// 絵文字を無効化
 }
 
+/// データベース接続設定
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider = "postgresql" /// データベースプロバイダ
+  url      = env("DATABASE_URL") /// 環境変数からDB接続URLを取得
 }
 
 /// タグタイプの列挙型
+/// - Flag: フラグ値
+/// - Categorical: カテゴリ値
+/// - Array: 配列値
+/// - Enum: 列挙型
+/// - Text: テキスト値
 enum TagType {
-  Flag
-  Categorical
-  Array
-  Enum
-  Text
+  Flag /// 真偽値を表すフラグタイプ
+  Categorical /// カテゴリ分類を表すタイプ
+  Array /// 複数の値を持つ配列タイプ
+  Enum /// 定義された値のみを選択できる列挙型
+  Text /// 自由記述のテキストタイプ
 }
 
 /// 難易度の列挙型
+/// - LOW: 低難度
+/// - MID: 中難度
+/// - HIGH: 高難度
 enum DifficultyLevel {
-  LOW
-  MID
-  HIGH
+  LOW /// 初級者向け、基本的な問題
+  MID /// 中級者向け、標準的な問題
+  HIGH /// 上級者向け、難しい問題
 }
 
 /// 問題タイプの列挙型
+/// - calc: 計算問題
+/// - memorization: 暗記問題
 enum ProblemType {
-  calc
-  memorization
+  calc /// 数値計算や公式の適用が必要な問題
+  memorization /// 法令や規則などの暗記が必要な問題
 }
 
 /// カテゴリの列挙型
+/// - law: 法規
+/// - safety: 安全
+/// - equipment: 設備
 enum CategoryValue {
-  law
-  safety
-  equipment
+  law /// 法令・基準に関する分野
+  safety /// 安全管理に関する分野
+  equipment /// 設備・機器に関する分野
 }
 
 /// 試験種別の列挙型
+/// - L1_ELECTRIC: 1級電気工事施工管理技士
+/// - L1_PIPE: 1級管工事施工管理技士
+/// - L2_ELECTRIC: 2級電気工事施工管理技士
+/// - L2_PIPE: 2級管工事施工管理技士
 enum ExamType {
-  L1_ELECTRIC @map("1級電気")
-  L1_PIPE     @map("1級管")
-  L2_ELECTRIC @map("2級電気")
-  L2_PIPE     @map("2級管")
+  L1_ELECTRIC @map("1級電気") /// 1級電気工事施工管理技士試験
+  L1_PIPE     @map("1級管") /// 1級管工事施工管理技士試験
+  L2_ELECTRIC @map("2級電気") /// 2級電気工事施工管理技士試験
+  L2_PIPE     @map("2級管") /// 2級管工事施工管理技士試験
 }
 
-/// 組織
+/// 組織モデル
+/// ユーザーが所属する組織を管理
 model Organization {
-  id        Int      @id @default(autoincrement())
-  name      String   @db.VarChar(255)
-  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
-  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz()
-  User      User[]
+  id        Int      @id @default(autoincrement()) /// 組織の一意識別子
+  name      String   @db.VarChar(255) /// 組織名
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz() /// 作成日時
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz() /// 更新日時
+  User      User[]   /// 組織に所属するユーザー一覧
 
-  @@map("organizations")
+  @@map("organizations") /// テーブル名のマッピング
 }
 
-/// ユーザー
+/// ユーザーモデル
+/// システムを利用するユーザー情報を管理
 model User {
-  id                Int                 @id @default(autoincrement())
-  firstName         String              @map("first_name") @db.VarChar(20)
-  lastName          String              @map("last_name") @db.VarChar(20)
-  email             String              @unique @db.VarChar(255)
-  organizationId    Int                 @map("organization_id")
-  Organization      Organization        @relation(fields: [organizationId], references: [id])
-  createdAt         DateTime            @default(now()) @map("created_at") @db.Timestamptz()
-  updatedAt         DateTime            @updatedAt @map("updated_at") @db.Timestamptz()
-  UserAnswer        UserAnswer[]
-  UserStats         UserStats[]
-  UserAnswerSummary UserAnswerSummary[]
+  id                Int                 @id @default(autoincrement()) /// ユーザーの一意識別子
+  firstName         String              @map("first_name") @db.VarChar(20) /// 名
+  lastName          String              @map("last_name") @db.VarChar(20) /// 姓
+  email             String              @unique @db.VarChar(255) /// メールアドレス（一意）
+  organizationId    Int                 @map("organization_id") /// 所属組織ID
+  Organization      Organization        @relation(fields: [organizationId], references: [id]) /// 所属組織との関連
+  createdAt         DateTime            @default(now()) @map("created_at") @db.Timestamptz() /// 作成日時
+  updatedAt         DateTime            @updatedAt @map("updated_at") @db.Timestamptz() /// 更新日時
+  UserAnswer        UserAnswer[]        /// ユーザーの回答履歴
+  UserStats         UserStats[]         /// ユーザーの成績統計
+  UserAnswerSummary UserAnswerSummary[] /// ユーザーの回答サマリー
 
-  @@map("users")
+  @@map("users") /// テーブル名のマッピング
 }
 
-/// 試験種別(1級電・1級管)
+/// 試験種別モデル
+/// 1級電気工事士、1級管工事士などの試験種別を管理
 model Type {
-  id       Int        @id @default(autoincrement())
-  name     String     @db.VarChar(255)
-  slug     String     @unique @db.VarChar(255)
-  Category Category[]
+  id       Int        @id @default(autoincrement()) /// 試験種別の一意識別子
+  name     String     @db.VarChar(255) /// 試験種別名
+  slug     String     @unique @db.VarChar(255) /// URLなどで使用するスラッグ（一意）
+  Category Category[] /// この試験種別に属するカテゴリ一覧
 
-  @@map("types")
+  @@map("types") /// テーブル名のマッピング
 }
 
-/// 単元
+/// 単元モデル
+/// 試験の出題分野や章を管理
 model Category {
-  id                Int                 @id @default(autoincrement())
-  name              String              @db.VarChar(255)
-  description       String              @db.VarChar(255)
-  slug              String              @unique @db.VarChar(255)
-  Type              Type                @relation(fields: [typeId], references: [id])
-  typeId            Int                 @map("type_id")
-  Question          Question[]
-  UserStats         UserStats[]
-  UserAnswerSummary UserAnswerSummary[]
+  id                Int                 @id @default(autoincrement()) /// カテゴリの一意識別子
+  name              String              @db.VarChar(255) /// カテゴリ名
+  description       String              @db.VarChar(255) /// カテゴリの説明
+  slug              String              @unique @db.VarChar(255) /// URLなどで使用するスラッグ（一意）
+  Type              Type                @relation(fields: [typeId], references: [id]) /// 試験種別との関連
+  typeId            Int                 @map("type_id") /// 試験種別ID
+  Question          Question[]          /// このカテゴリに属する問題一覧
+  UserStats         UserStats[]         /// このカテゴリの成績統計
+  UserAnswerSummary UserAnswerSummary[] /// このカテゴリの回答サマリー
 
-  @@map("categories")
+  @@map("categories") /// テーブル名のマッピング
 }
 
-/// タグ定義
+/// タグ定義モデル
+/// 問題に付与できるタグの定義を管理
 model TagDefinition {
-  id             Int           @id @default(autoincrement())
-  tagKey         String        @unique @map("tag_key") @db.VarChar(50)
-  tagType        TagType       @map("tag_type")
-  description    String        @db.Text
-  possibleValues Json?         @map("possible_values")
-  remarks        String?       @db.Text
-  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz()
-  updatedAt      DateTime      @updatedAt @map("updated_at") @db.Timestamptz()
-  QuestionTag    QuestionTag[]
+  id             Int           @id @default(autoincrement()) /// タグ定義の一意識別子
+  tagKey         String        @unique @map("tag_key") @db.VarChar(50) /// タグのキー（一意）
+  tagType        TagType       @map("tag_type") /// タグのタイプ
+  description    String        @db.Text /// タグの説明
+  possibleValues Json?         @map("possible_values") /// タグで使用可能な値のリスト（JSONB）
+  remarks        String?       @db.Text /// 備考・運用メモ
+  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz() /// 作成日時
+  updatedAt      DateTime      @updatedAt @map("updated_at") @db.Timestamptz() /// 更新日時
+  QuestionTag    QuestionTag[] /// このタグ定義を使用しているタグ一覧
 
-  @@map("tag_definitions")
+  @@map("tag_definitions") /// テーブル名のマッピング
 }
 
-/// 問題とタグの関連付け
+/// 問題とタグの関連付けモデル
+/// 問題に付与されたタグ情報を管理
 model QuestionTag {
-  id           Int           @id @default(autoincrement())
-  questionId   Int           @map("question_id")
-  tagKey       String        @map("tag_key") @db.VarChar(50)
-  tagValue     String        @map("tag_value") @db.Text
-  aiInference  String?       @map("ai_inference") @db.VarChar(20)
-  remarks      String?       @db.Text
-  createdAt    DateTime      @default(now()) @map("created_at") @db.Timestamptz()
-  updatedAt    DateTime      @updatedAt @map("updated_at") @db.Timestamptz()
-  Question     Question      @relation(fields: [questionId], references: [id], onDelete: Cascade)
-  TagDefinition TagDefinition @relation(fields: [tagKey], references: [tagKey], onDelete: Cascade)
+  id           Int           @id @default(autoincrement()) /// 問題タグの一意識別子
+  questionId   Int           @map("question_id") /// 問題ID
+  tagKey       String        @map("tag_key") @db.VarChar(50) /// タグのキー
+  tagValue     String        @map("tag_value") @db.Text /// タグの値
+  aiInference  String?       @map("ai_inference") @db.VarChar(20) /// AI推論による付与か（manual/by_AI/by_expert）
+  remarks      String?       @db.Text /// 備考・メモ
+  createdAt    DateTime      @default(now()) @map("created_at") @db.Timestamptz() /// 作成日時
+  updatedAt    DateTime      @updatedAt @map("updated_at") @db.Timestamptz() /// 更新日時
+  Question     Question      @relation(fields: [questionId], references: [id], onDelete: Cascade) /// 問題との関連
+  TagDefinition TagDefinition @relation(fields: [tagKey], references: [tagKey], onDelete: Cascade) /// タグ定義との関連
 
-  @@unique([questionId, tagKey])
-  @@index([questionId])
-  @@index([tagKey])
-  @@index([tagValue])
-  @@map("question_tags")
+  @@unique([questionId, tagKey]) /// 同じ問題に同じタグは一度だけ
+  @@index([questionId]) /// 検索効率化のためのインデックス
+  @@index([tagKey]) /// 検索効率化のためのインデックス
+  @@index([tagValue]) /// 検索効率化のためのインデックス
+  @@map("question_tags") /// テーブル名のマッピング
 }
 
-/// 問題
+/// 問題モデル
+/// 試験問題の内容を管理
 model Question {
-  id               Int                @id @default(autoincrement())
-  title            String             @db.VarChar(255)
-  body             String             @db.Text
-  Category         Category           @relation(fields: [categoryId], references: [id])
-  categoryId       Int                @map("category_id")
-  Explain          Explain            @relation(fields: [explainId], references: [id])
-  explainId        Int                @unique @map("explain_id")
-  Answer           Answer[]
-  UserAnswer       UserAnswer[]
-  QuestionTag      QuestionTag[]
-  FrequentQuestion FrequentQuestion[]
+  id               Int                @id @default(autoincrement()) /// 問題の一意識別子
+  title            String             @db.VarChar(255) /// 問題のタイトル
+  body             String             @db.Text /// 問題文本体
+  Category         Category           @relation(fields: [categoryId], references: [id]) /// カテゴリとの関連
+  categoryId       Int                @map("category_id") /// カテゴリID
+  Explain          Explain            @relation(fields: [explainId], references: [id]) /// 解説との関連
+  explainId        Int                @unique @map("explain_id") /// 解説ID（一意）
+  Answer           Answer[]           /// この問題の選択肢一覧
+  UserAnswer       UserAnswer[]       /// この問題への回答履歴
+  QuestionTag      QuestionTag[]      /// この問題に付与されたタグ一覧
+  FrequentQuestion FrequentQuestion[] /// この問題の頻出度情報
 
-  @@map("questions")
+  @@map("questions") /// テーブル名のマッピング
 }
 
-/// 選択肢
+/// 選択肢モデル
+/// 問題の選択肢を管理
 model Answer {
-  id         Int          @id @default(autoincrement())
-  body       String       @db.Text
-  Question   Question     @relation(fields: [questionId], references: [id])
-  questionId Int          @map("question_id")
-  isCorrect  Boolean      @default(false) @map("is_correct") /// true:正解, false:不正解
-  UserAnswer UserAnswer[]
+  id         Int          @id @default(autoincrement()) /// 選択肢の一意識別子
+  body       String       @db.Text /// 選択肢の内容
+  Question   Question     @relation(fields: [questionId], references: [id]) /// 問題との関連
+  questionId Int          @map("question_id") /// 問題ID
+  isCorrect  Boolean      @default(false) @map("is_correct") /// 正解フラグ（true:正解, false:不正解）
+  UserAnswer UserAnswer[] /// この選択肢を選んだユーザーの回答履歴
 
-  @@map("answers")
+  @@map("answers") /// テーブル名のマッピング
 }
 
-/// ユーザーの回答
+/// ユーザーの回答モデル
+/// ユーザーが問題に回答した履歴を管理
 model UserAnswer {
-  id         Int      @id @default(autoincrement())
-  user       User     @relation(fields: [userId], references: [id])
-  userId     Int      @map("user_id")
-  question   Question @relation(fields: [questionId], references: [id])
-  questionId Int      @map("question_id")
-  answer     Answer   @relation(fields: [answerId], references: [id])
-  answerId   Int      @map("answer_id")
-  status     Int      @default(1) /// 1:未回答, 2:正解, 3:不正解
-  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  id         Int      @id @default(autoincrement()) /// ユーザー回答の一意識別子
+  user       User     @relation(fields: [userId], references: [id]) /// ユーザーとの関連
+  userId     Int      @map("user_id") /// ユーザーID
+  question   Question @relation(fields: [questionId], references: [id]) /// 問題との関連
+  questionId Int      @map("question_id") /// 問題ID
+  answer     Answer   @relation(fields: [answerId], references: [id]) /// 選択した答えとの関連
+  answerId   Int      @map("answer_id") /// 選択した答えのID
+  status     Int      @default(1) /// 回答状態（1:未回答, 2:正解, 3:不正解）
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz() /// 作成日時（回答日時）
 
-  @@map("user_answers")
+  @@map("user_answers") /// テーブル名のマッピング
 }
 
-/// 解説
+/// 解説モデル
+/// 問題の解説内容を管理
 model Explain {
-  id          Int           @id @default(autoincrement())
-  body        String        @db.Text
-  question    Question?
-  ExplainTerm ExplainTerm[]
+  id          Int           @id @default(autoincrement()) /// 解説の一意識別子
+  body        String        @db.Text /// 解説本文
+  question    Question?     /// この解説が紐づく問題（nullableのため修正）
+  ExplainTerm ExplainTerm[] /// この解説で使用される用語一覧
 
-  @@map("explains")
+  @@map("explains") /// テーブル名のマッピング
 }
 
-/// 頻出問題リスト
+/// 頻出問題リストモデル
+/// 頻出度の高い問題を管理
 model FrequentQuestion {
-  id             Int      @id @default(autoincrement())
-  question       Question @relation(fields: [questionId], references: [id])
-  questionId     Int      @map("question_id")
-  frequencyScore Decimal  @map("frequency_score") @db.Decimal(5, 2) /// 過去の出題回数をスコア化
-  accuracyScore  Decimal  @map("accuracy_score") @db.Decimal(5, 2) /// ユーザーの正答率をスコア化
-  totalScore     Decimal  @map("total_score") @db.Decimal(5, 2) ///  合算したスコアの値
-  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz()
-  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz()
+  id             Int      @id @default(autoincrement()) /// 頻出問題の一意識別子
+  question       Question @relation(fields: [questionId], references: [id]) /// 問題との関連
+  questionId     Int      @map("question_id") /// 問題ID
+  frequencyScore Decimal  @map("frequency_score") @db.Decimal(5, 2) /// 出題頻度スコア（過去の出題回数をスコア化）
+  accuracyScore  Decimal  @map("accuracy_score") @db.Decimal(5, 2) /// 正答率スコア（ユーザーの正答率をスコア化）
+  totalScore     Decimal  @map("total_score") @db.Decimal(5, 2) /// 総合スコア（頻度と正答率の合算値）
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz() /// 作成日時
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz() /// 更新日時
 
-  @@map("frequent_questions")
+  @@map("frequent_questions") /// テーブル名のマッピング
 }
 
-/// ユーザーの合格率
+/// ユーザーの合格率モデル
+/// ユーザーごとの成績統計を管理
 model UserStats {
-  id         Int      @id @default(autoincrement())
-  user       User     @relation(fields: [userId], references: [id])
-  userId     Int      @map("user_id")
-  category   Category @relation(fields: [categoryId], references: [id])
-  categoryId Int      @map("category_id")
-  score      Decimal  @map("score") @db.Decimal(5, 2) /// 合格率(直近50問の正答率)
-  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  id         Int      @id @default(autoincrement()) /// 統計の一意識別子
+  user       User     @relation(fields: [userId], references: [id]) /// ユーザーとの関連
+  userId     Int      @map("user_id") /// ユーザーID
+  category   Category @relation(fields: [categoryId], references: [id]) /// カテゴリとの関連
+  categoryId Int      @map("category_id") /// カテゴリID
+  score      Decimal  @map("score") @db.Decimal(5, 2) /// 合格率スコア（直近50問の正答率）
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz() /// 作成日時
 
-  @@map("user_stats")
+  @@map("user_stats") /// テーブル名のマッピング
 }
 
 /// ユーザー回答の集計用テーブル
+/// 日付ごとのユーザーの回答実績を集計
 model UserAnswerSummary {
-  id           Int      @id @default(autoincrement())
-  user         User     @relation(fields: [userId], references: [id])
-  userId       Int      @map("user_id")
-  category     Category @relation(fields: [categoryId], references: [id])
-  categoryId   Int      @map("category_id")
-  totalCount   Int      @map("total_count") /// 問題数
-  correctCount Int      @map("correct_count") /// 正解数
-  date         DateTime @db.Date
+  id           Int      @id @default(autoincrement()) /// サマリーの一意識別子
+  user         User     @relation(fields: [userId], references: [id]) /// ユーザーとの関連
+  userId       Int      @map("user_id") /// ユーザーID
+  category     Category @relation(fields: [categoryId], references: [id]) /// カテゴリとの関連
+  categoryId   Int      @map("category_id") /// カテゴリID
+  totalCount   Int      @map("total_count") /// 回答した問題の総数
+  correctCount Int      @map("correct_count") /// 正解した問題の数
+  date         DateTime @db.Date /// 集計日
 
-  @@map("user_answer_summaries")
+  @@map("user_answer_summaries") /// テーブル名のマッピング
 }
 
-/// 用語タグ
+/// 用語タグモデル
+/// 用語の分類を管理
 model TermTag {
-  id   Int    @id @default(autoincrement())
-  name String @db.VarChar(255)
-  Term Term[]
+  id   Int    @id @default(autoincrement()) /// 用語タグの一意識別子
+  name String @db.VarChar(255) /// タグ名
+  Term Term[] /// このタグが付与された用語一覧
 
-  @@map("term_tags")
+  @@map("term_tags") /// テーブル名のマッピング
 }
 
-/// 用語
+/// 用語モデル
+/// 解説で使用される専門用語を管理
 model Term {
-  id          Int           @id @default(autoincrement())
-  name        String        @db.VarChar(255)
-  description String        @db.Text
-  filePath    String?       @map("file_path") @db.Text
-  TermTag     TermTag       @relation(fields: [termTagId], references: [id])
-  termTagId   Int           @map("term_tag_id")
-  ExplainTerm ExplainTerm[]
+  id          Int           @id @default(autoincrement()) /// 用語の一意識別子
+  name        String        @db.VarChar(255) /// 用語名
+  description String        @db.Text /// 用語の説明
+  filePath    String?       @map("file_path") @db.Text /// 関連ファイルへのパス（任意）
+  TermTag     TermTag       @relation(fields: [termTagId], references: [id]) /// 用語タグとの関連
+  termTagId   Int           @map("term_tag_id") /// 用語タグID
+  ExplainTerm ExplainTerm[] /// この用語が使用されている解説一覧
 
-  @@map("terms")
+  @@map("terms") /// テーブル名のマッピング
 }
 
 /// 解説と用語の中間テーブル
+/// 解説で使用される用語の関連付けを管理
 model ExplainTerm {
-  explain    Explain @relation(fields: [explainsId], references: [id])
-  term       Term    @relation(fields: [termsId], references: [id])
-  explainsId Int     @map("explain_id")
-  termsId    Int     @map("term_id")
+  explain    Explain @relation(fields: [explainsId], references: [id]) /// 解説との関連
+  term       Term    @relation(fields: [termsId], references: [id]) /// 用語との関連
+  explainsId Int     @map("explain_id") /// 解説ID
+  termsId    Int     @map("term_id") /// 用語ID
 
-  @@id([explainsId, termsId])
-  @@map("explain_terms")
-} 
+  @@id([explainsId, termsId]) /// 複合主キー
+  @@map("explain_terms") /// テーブル名のマッピング
+}

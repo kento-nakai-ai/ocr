@@ -1,0 +1,5 @@
+{
+  "image_path": "data/images/似てない問題/令和5年度_page_009.png",
+  "file_name": "令和5年度_page_009",
+  "text_content": "```json\n{\n  \"problems\": [\n    {\n      \"id\": 1,\n      \"question\": \"JIS C 4902-1「高圧及び特別高圧進相コンデンサ並びに附属機器 第1部:コンデンサ」3.11 保安装置内蔵コンデンサに、「蒸着電極コンデンサの安全性を特に増すため、コンデンサの内部に異常が生じた際、異常素子又は素体に電圧が加わらないように切り離しできる装置を組み込んだコンデンサ。」と規定されている。表 はく電極 (NH) コンデンサと蒸着電極 (SH) コンデンサの特徴 をもとに、最も不適当なものを選べ。\",\n      \"has_circuit_diagram\": false,\n      \"circuit_description\": null,\n      \"has_table\": true,\n      \"choices\": [\n        {\n          \"number\": 1,\n          \"text\": \"NHコンデンサは自己回復機能がない。\"\n        },\n        {\n          \"number\": 2,\n          \"text\": \"SHコンデンサは自己回復機能がある。\"\n        },\n        {\n          \"number\": 3,\n          \"text\": \"NHコンデンサは、誘電体に弱点があれば、そこで破壊し継続使用不可能。\"\n        },\n        {\n          \"number\": 4,\n          \"text\": \"SHコンデンサは、誘電体に弱点部があっても自己回復作用により弱点部を除去して、継続使用可能。\"\n        }\n      ],\n      \"explanation\": null,\n      \"correct_answer\": 1\n    }\n  ]\n}\n```"
+}

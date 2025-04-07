@@ -133,12 +133,44 @@ class EmbeddingImporter:
                 self.logger.error("pgvector拡張が利用できないため、テーブルを作成できません")
                 return False
             
+            # エンベディングの次元数を推定
+            if os.path.isdir(self.input_path):
+                # ディレクトリ内の最初のnpyファイルを探す
+                embedding_files = list(Path(self.input_path).glob('**/*_embedding.npy'))
+                if not embedding_files and os.path.isdir(self.input_path):
+                    embedding_files = list(Path(self.input_path).glob('**/*.npy'))
+                
+                if embedding_files:
+                    # 最初のファイルから次元数を取得
+                    sample_embedding = np.load(str(embedding_files[0]))
+                    if sample_embedding.ndim > 1:
+                        sample_embedding = sample_embedding[0]
+                    embedding_dim = len(sample_embedding)
+                    self.logger.info(f"エンベディングの次元数を検出: {embedding_dim}")
+                else:
+                    # デフォルト値を使用
+                    embedding_dim = 1536
+                    self.logger.warning(f"エンベディングファイルが見つかりません。デフォルトの次元数を使用: {embedding_dim}")
+            else:
+                # 単一ファイル
+                if os.path.isfile(self.input_path) and self.input_path.lower().endswith('.npy'):
+                    sample_embedding = np.load(self.input_path)
+                    if sample_embedding.ndim > 1:
+                        sample_embedding = sample_embedding[0]
+                    embedding_dim = len(sample_embedding)
+                    self.logger.info(f"エンベディングの次元数を検出: {embedding_dim}")
+                else:
+                    # デフォルト値を使用
+                    embedding_dim = 1536
+                    self.logger.warning(f"有効なエンベディングファイルではありません。デフォルトの次元数を使用: {embedding_dim}")
+            
             # embeddingsテーブルの作成
             cursor.execute(f"""
                 CREATE TABLE IF NOT EXISTS {self.table_name} (
                     id SERIAL PRIMARY KEY,
                     question_id VARCHAR(50) REFERENCES {self.question_table}(question_id),
-                    embedding vector(1536),
+                    embedding_type VARCHAR(50) NOT NULL,
+                    embedding vector({embedding_dim}),
                     metadata JSONB,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
@@ -280,10 +312,11 @@ class EmbeddingImporter:
             
             # 新しいエンベディングを挿入
             cursor.execute(f"""
-                INSERT INTO {self.table_name} (question_id, embedding, metadata)
-                VALUES (%s, %s, %s)
+                INSERT INTO {self.table_name} (question_id, embedding_type, embedding, metadata)
+                VALUES (%s, %s, %s, %s)
             """, (
                 question_id,
+                "text",  # デフォルトのembedding_type値を設定
                 embedding.tolist(),  # pgvector用にリスト形式に変換
                 Json(metadata) if metadata else None
             ))

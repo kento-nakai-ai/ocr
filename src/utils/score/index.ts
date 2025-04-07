@@ -7,6 +7,15 @@
 
 // 計算ロジック
 export { calculateScore } from './calculator';
+export { 
+  calculateFrequentlyAskedScore,
+  selectTop300FrequentlyAskedQuestions,
+  selectUniqueTop300FrequentlyAskedQuestions,
+  calculateFrequencyScore,
+  calculateAccuracyScore,
+  calculateYearlyBonus,
+  FrequentlyAskedScoreConfig
+} from './frequently_asked_calculator';
 
 // 設定値
 export { ScoreConfig } from './config';
@@ -17,7 +26,10 @@ export {
   ScoreResult,
   Question,
   UserAnswer,
-  QuestionDifficulty
+  QuestionDifficulty,
+  FrequentlyAskedQuestionData,
+  FrequentlyAskedScoreResult,
+  FrequentlyAskedScoreConfig as FrequentlyAskedScoreConfigType
 } from './types';
 
 // ユーティリティ関数

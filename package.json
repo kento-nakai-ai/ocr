@@ -6,12 +6,19 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "ts-node src/index.ts",
-    "run:example": "ts-node src/utils/score/examples.ts"
+    "run:example": "ts-node src/utils/score/examples.ts",
+    "extract-frequently-asked": "ts-node src/extract_frequently_asked.ts"
   },
   "dependencies": {
+    "dotenv": "^16.3.1",
+    "fs": "^0.0.1-security",
+    "log4js": "^6.9.1",
+    "path": "^0.12.7",
     "typescript": "^5.0.0"
   },
   "devDependencies": {
+    "@types/dotenv": "^8.2.0",
+    "@types/log4js": "^2.3.5",
     "@types/node": "^18.0.0",
     "ts-node": "^10.9.1"
   }
