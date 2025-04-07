@@ -10,6 +10,8 @@
 #
 # 使用例:
 #   ./run_pipeline.sh path/to/document.pdf --use-llm --year 2024 --claude
+#   ./run_pipeline.sh path/to/document.pdf --direct-katex --year 2024
+#   ./run_pipeline.sh path/to/document.pdf --use-llm --gemini --multimodal-embedding
 #
 # 作者: OCRプロジェクトチーム
 # ====================================================================================
@@ -29,6 +31,8 @@ IMAGES_DIR="$DATA_DIR/images"
 OCR_DIR="$DATA_DIR/ocr"
 MARKDOWN_DIR="$DATA_DIR/markdown"
 EMBEDDING_DIR="$DATA_DIR/embedding"
+CLAUDE_DIR="$DATA_DIR/claude"
+GEMINI_DIR="$DATA_DIR/gemini"
 
 # デフォルト設定
 DEFAULT_DPI=300
@@ -57,6 +61,7 @@ USE_GEMINI=true # Gemini APIを使用するかどうか（デフォルト）
 DIRECT_KATEX=false # 画像から直接KaTeX形式に変換するかどうか
 MULTIMODAL_EMBEDDING=false # マルチモーダルエンベディングを生成するかどうか
 NO_API=false # API呼び出しを使用せずダミーエンベディングを生成するかどうか
+SIMILARITY_COMPARE=false # エンベディング類似度比較を実行するかどうか
 
 # ヘルプ表示関数
 function show_help {
@@ -76,6 +81,7 @@ function show_help {
   echo "  --direct-katex       画像から直接KaTeX形式に変換（OCRをスキップ）"
   echo "  --multimodal-embedding 画像とテキストを組み合わせたマルチモーダルエンベディングを生成"
   echo "  --no-api             API呼び出しを使用せずダミーエンベディングを生成"
+  echo "  --similarity-compare エンベディング間の類似度比較を実行"
   echo "  --year YEAR          対象年度を指定（デフォルト: 2025）"
   echo "  --prefix PREFIX      問題IDのプレフィックスを指定（デフォルト: Q）"
   echo "  --dpi DPI            画像変換時のDPI値を指定（デフォルト: 300）"
@@ -87,6 +93,7 @@ function show_help {
   echo "  $0 data/pdf/sample.pdf --use-llm --year 2024 --gemini"
   echo "  $0 data/pdf/sample.pdf --direct-katex --year 2024"
   echo "  $0 data/pdf/sample.pdf --use-llm --gemini --multimodal-embedding"
+  echo "  $0 data/pdf/sample.pdf --use-llm --similarity-compare"
   echo ""
   exit 0
 }
@@ -116,6 +123,8 @@ while [ $# -gt 0 ]; do
       OCR_DIR="$OUTPUT_DIR/ocr"
       MARKDOWN_DIR="$OUTPUT_DIR/markdown"
       EMBEDDING_DIR="$OUTPUT_DIR/embedding"
+      CLAUDE_DIR="$OUTPUT_DIR/claude"
+      GEMINI_DIR="$OUTPUT_DIR/gemini"
       shift 2
       ;;
     --skip-ocr)
@@ -169,6 +178,10 @@ while [ $# -gt 0 ]; do
       NO_API=true
       shift
       ;;
+    --similarity-compare)
+      SIMILARITY_COMPARE=true
+      shift
+      ;;
     --year)
       YEAR="$2"
       shift 2
@@ -198,7 +211,7 @@ done
 
 # 必要なディレクトリの作成
 mkdir -p "$PDF_DIR" "$IMAGES_DIR" "$OCR_DIR" "$MARKDOWN_DIR" "$EMBEDDING_DIR"
-mkdir -p "$OUTPUT_DIR/claude" "$OUTPUT_DIR/gemini"
+mkdir -p "$CLAUDE_DIR" "$GEMINI_DIR"
 
 # PDFファイル名の取得（パスを除く）
 PDF_FILENAME=$(basename "$PDF_FILE")
@@ -257,18 +270,18 @@ if [ "$SKIP_ANALYSIS" = false ]; then
   echo "ステップ5: 画像解析（マルチモーダルAPI）中..."
   
   if [ "$USE_CLAUDE" = true ]; then
-    ANALYSIS_CMD="python $SCRIPTS_DIR/claude_image_analyzer.py --input $IMAGES_DIR/$PDF_NAME --output $OUTPUT_DIR/claude/$PDF_NAME"
+    ANALYSIS_CMD="python $SCRIPTS_DIR/claude_image_analyzer.py --input $IMAGES_DIR/$PDF_NAME --output $CLAUDE_DIR/$PDF_NAME"
     eval "$ANALYSIS_CMD"
-    echo "  -> Claude APIによる画像解析完了: $OUTPUT_DIR/claude/$PDF_NAME"
+    echo "  -> Claude APIによる画像解析完了: $CLAUDE_DIR/$PDF_NAME"
   elif [ "$USE_GEMINI" = true ]; then
-    ANALYSIS_CMD="python $SCRIPTS_DIR/gemini_image_analyzer.py --input $IMAGES_DIR/$PDF_NAME --output $OUTPUT_DIR/gemini/$PDF_NAME"
+    ANALYSIS_CMD="python $SCRIPTS_DIR/gemini_image_analyzer.py --input $IMAGES_DIR/$PDF_NAME --output $GEMINI_DIR/$PDF_NAME"
     
     if [ "$MULTIMODAL_EMBEDDING" = true ]; then
       ANALYSIS_CMD="$ANALYSIS_CMD --multimodal-embedding"
     fi
     
     eval "$ANALYSIS_CMD"
-    echo "  -> Gemini APIによる画像解析完了: $OUTPUT_DIR/gemini/$PDF_NAME"
+    echo "  -> Gemini APIによる画像解析完了: $GEMINI_DIR/$PDF_NAME"
   fi
 fi
 
@@ -277,9 +290,9 @@ if [ "$SKIP_EMBEDDING" = false ] && [ "$MULTIMODAL_EMBEDDING" = false ]; then
   echo "ステップ6: エンベディング生成中..."
   
   if [ "$USE_CLAUDE" = true ]; then
-    EMBEDDING_CMD="python $SCRIPTS_DIR/generate_embedding.py --input $OUTPUT_DIR/claude/$PDF_NAME --dimension 1536 --parallel $PARALLEL"
+    EMBEDDING_CMD="python $SCRIPTS_DIR/generate_embedding.py --input $CLAUDE_DIR/$PDF_NAME --dimension 1536 --parallel $PARALLEL"
   else
-    EMBEDDING_CMD="python $SCRIPTS_DIR/generate_embedding.py --input $OUTPUT_DIR/gemini/$PDF_NAME --dimension 1536 --parallel $PARALLEL"
+    EMBEDDING_CMD="python $SCRIPTS_DIR/generate_embedding.py --input $GEMINI_DIR/$PDF_NAME --dimension 1536 --parallel $PARALLEL"
   fi
   
   if [ "$NO_API" = true ]; then
@@ -295,12 +308,25 @@ if [ "$SKIP_EMBED_IMPORT" = false ]; then
   echo "ステップ7: エンベディングをDBにインポート中..."
   
   if [ "$USE_CLAUDE" = true ]; then
-    python "$SCRIPTS_DIR/embed_importer.py" --input "$OUTPUT_DIR/claude/$PDF_NAME" --table embeddings
+    python "$SCRIPTS_DIR/embed_importer.py" --input "$CLAUDE_DIR/$PDF_NAME" --table embeddings
   else
-    python "$SCRIPTS_DIR/embed_importer.py" --input "$OUTPUT_DIR/gemini/$PDF_NAME" --table embeddings
+    python "$SCRIPTS_DIR/embed_importer.py" --input "$GEMINI_DIR/$PDF_NAME" --table embeddings
   fi
   
   echo "  -> エンベディングのDBインポート完了"
+fi
+
+# ステップ8: エンベディング類似度比較（オプション）
+if [ "$SIMILARITY_COMPARE" = true ]; then
+  echo "ステップ8: エンベディング類似度比較中..."
+  
+  if [ "$USE_CLAUDE" = true ]; then
+    python "$SCRIPTS_DIR/compare_similarity.py" --input "$CLAUDE_DIR/$PDF_NAME" --output "$OUTPUT_DIR/similarity_reports/$PDF_NAME"
+  else
+    python "$SCRIPTS_DIR/compare_similarity.py" --input "$GEMINI_DIR/$PDF_NAME" --output "$OUTPUT_DIR/similarity_reports/$PDF_NAME"
+  fi
+  
+  echo "  -> 類似度比較レポート生成完了: $OUTPUT_DIR/similarity_reports/$PDF_NAME"
 fi
 
 echo "パイプライン処理が完了しました！"
@@ -309,6 +335,13 @@ echo "処理結果:"
 echo "  - PDF → 画像: $IMAGES_DIR/$PDF_NAME"
 echo "  - OCRテキスト: $OCR_DIR/$PDF_NAME"
 echo "  - Markdown: $MARKDOWN_DIR/$PDF_NAME"
+
+if [ "$USE_CLAUDE" = true ]; then
+  echo "  - 解析結果: $CLAUDE_DIR/$PDF_NAME"
+else
+  echo "  - 解析結果: $GEMINI_DIR/$PDF_NAME"
+fi
+
 echo "  - エンベディング: $EMBEDDING_DIR/$PDF_NAME"
 echo "  - データベース: questionsテーブルおよびembeddingsテーブル"
 echo ""

@@ -221,6 +221,10 @@ OPENAI_API_KEY=your_openai_api_key
 │   ├── pdf2md_claude.py               # Claude 3.7 Sonnetを使ったPDF→Markdown変換
 │   ├── pdf2md_gemini.py               # Gemini 2.5 Proを使ったPDF→Markdown変換
 │   ├── extract_sample_pages.py        # PDFからサンプルページを抽出するスクリプト
+│   ├── embedding_analyzer.py          # エンベディング分析ツール
+│   ├── compare_samples.py             # 類似/非類似問題の比較ツール
+│   ├── compare_similarity.py          # 類似度比較ツール
+│   ├── db_utils.py                    # データベース操作ユーティリティ
 │   ├── README.md                      # srcディレクトリのREADME
 │   ├── input/                         # 入力ファイル保存ディレクトリ
 │   └── output/                        # 出力ファイル保存ディレクトリ
@@ -231,6 +235,7 @@ OPENAI_API_KEY=your_openai_api_key
     ├── markdown/                 # 変換されたMarkdown
     ├── embedding/                # 画像・テキスト埋め込み（ベクトル）
     ├── claude/                   # Claude APIの出力結果
+    ├── gemini/                   # Gemini APIの出力結果
     └── .gitkeep                  # 空ディレクトリをバージョン管理するためのファイル
 ```
 
@@ -315,14 +320,11 @@ python src/generate_embedding.py --input analysis_results.json --no-api
 ./run_pipeline.sh data/pdf/sample.pdf --use-llm --gemini --multimodal-embedding
 ```
 
-## 参考リンク
+### サンプルページ抽出と分析
 
-- [try-vertex-ai-multimodal-search (zenn.dev)](https://zenn.dev/longrun_jp/articles/try-vertex-ai-multimodal-search)  
-- [pgvector GitHub](https://github.com/pgvector/pgvector)
-
-## ライセンス
-
-このプロジェクトはMITライセンスの下で公開されています。
+```bash
+./extract_sample.sh data/pdf/large_document.pdf --use-llm --claude --pages 10
+```
 
 ## エンベディング分析ツール
 
@@ -351,3 +353,21 @@ python src/compare_samples.py --input data/embedding/samples/sample_files.json -
 
 これにより、指定された問題に対して類似度が高い問題と低い問題を比較したレポートが生成されます。
 レポートには問題の画像とマークダウンテキストが含まれます。
+
+### エンベディング類似度の比較
+
+`compare_similarity.py`を使用して、複数のエンベディング間の類似度を比較します。
+
+```bash
+# 類似度比較を実行
+python src/compare_similarity.py --input data/embedding --output data/similarity_report
+```
+
+## 参考リンク
+
+- [try-vertex-ai-multimodal-search (zenn.dev)](https://zenn.dev/longrun_jp/articles/try-vertex-ai-multimodal-search)  
+- [pgvector GitHub](https://github.com/pgvector/pgvector)
+
+## ライセンス
+
+このプロジェクトはMITライセンスの下で公開されています。

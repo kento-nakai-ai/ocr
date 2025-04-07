@@ -4,11 +4,13 @@
 # PDFサンプル抽出 + OCR処理実行スクリプト
 # ====================================================================================
 #
-# このスクリプトは、指定されたPDFファイルからサンプルとして10ページを抽出し、
+# このスクリプトは、指定されたPDFファイルからサンプルとして指定ページ数を抽出し、
 # 抽出したサンプルに対してOCR処理を実行します。
 #
 # 使用例:
 #   ./extract_sample.sh path/to/document.pdf --use-llm --claude
+#   ./extract_sample.sh path/to/document.pdf --use-llm --gemini --pages 15
+#   ./extract_sample.sh path/to/document.pdf --use-llm --dpi 600 --format jpeg
 #
 # 作者: OCRプロジェクトチーム
 # ====================================================================================
@@ -29,6 +31,8 @@ PDF_DIR="$DATA_DIR/pdf"
 IMAGES_DIR="$DATA_DIR/images"
 OCR_DIR="$DATA_DIR/ocr"
 MARKDOWN_DIR="$DATA_DIR/markdown"
+CLAUDE_DIR="$DATA_DIR/claude"
+GEMINI_DIR="$DATA_DIR/gemini"
 
 # デフォルト設定
 DEFAULT_DPI=300
@@ -40,11 +44,12 @@ DEFAULT_PARALLEL=4
 PDF_FILE=""
 USE_LLM=false
 USE_CLAUDE=false
-USE_GEMINI=false
+USE_GEMINI=true
 DPI=$DEFAULT_DPI
 FORMAT=$DEFAULT_FORMAT
 PAGES=$DEFAULT_PAGES
 PARALLEL=$DEFAULT_PARALLEL
+DIRECT_KATEX=false
 
 # ヘルプメッセージ
 function show_help {
@@ -58,10 +63,14 @@ function show_help {
     echo "  --use-llm           OCRにLLMベースの処理を使用する"
     echo "  --claude            画像解析にClaude APIを使用する"
     echo "  --gemini            画像解析にGemini APIを使用する（デフォルト）"
+    echo "  --direct-katex      画像から直接KaTeX形式に変換する（OCRをスキップ）"
     echo "  --parallel NUM      並列処理数を指定（デフォルト: $DEFAULT_PARALLEL）"
     echo "  --help              このヘルプを表示する"
     echo ""
-    echo "例: $0 data/pdf/sample.pdf --use-llm --claude --pages 10"
+    echo "例:"
+    echo "  $0 data/pdf/sample.pdf --use-llm --claude --pages 10"
+    echo "  $0 data/pdf/sample.pdf --use-llm --gemini --pages 15 --dpi 600"
+    echo "  $0 data/pdf/sample.pdf --direct-katex --format jpeg"
     exit 1
 }
 
@@ -85,6 +94,8 @@ while [[ $# -gt 0 ]]; do
             IMAGES_DIR="$DATA_DIR/images"
             OCR_DIR="$DATA_DIR/ocr"
             MARKDOWN_DIR="$DATA_DIR/markdown"
+            CLAUDE_DIR="$DATA_DIR/claude"
+            GEMINI_DIR="$DATA_DIR/gemini"
             shift 2
             ;;
         --dpi)
@@ -105,10 +116,17 @@ while [[ $# -gt 0 ]]; do
             ;;
         --claude)
             USE_CLAUDE=true
+            USE_GEMINI=false
             shift
             ;;
         --gemini)
             USE_GEMINI=true
+            USE_CLAUDE=false
+            shift
+            ;;
+        --direct-katex)
+            DIRECT_KATEX=true
+            USE_LLM=false # 直接KaTeX変換ではLLMベースOCRは不要
             shift
             ;;
         --parallel)
@@ -138,7 +156,7 @@ if [ ! -f "$PDF_FILE" ]; then
 fi
 
 # 必要なディレクトリを作成
-mkdir -p "$PDF_DIR" "$IMAGES_DIR" "$OCR_DIR" "$MARKDOWN_DIR"
+mkdir -p "$PDF_DIR" "$IMAGES_DIR" "$OCR_DIR" "$MARKDOWN_DIR" "$CLAUDE_DIR" "$GEMINI_DIR"
 
 # PDFファイル名（拡張子なし）を取得
 PDF_BASENAME=$(basename "$PDF_FILE" .pdf)
@@ -159,6 +177,7 @@ echo "  - 画像フォーマット: $FORMAT"
 echo "  - LLMベースOCR: $USE_LLM"
 echo "  - Claude画像解析: $USE_CLAUDE"
 echo "  - Gemini画像解析: $USE_GEMINI"
+echo "  - 直接KaTeX変換: $DIRECT_KATEX"
 echo "========================================================"
 
 # ステップ1: サンプルPDFの抽出
@@ -176,42 +195,62 @@ SAMPLE_BASENAME=$(basename "$SAMPLE_PDF" .pdf)
 SAMPLE_IMAGES_DIR="$IMAGES_DIR/$SAMPLE_BASENAME"
 mkdir -p "$SAMPLE_IMAGES_DIR"
 
-# pdf2imageを使ってPDFを画像に変換
-python3 -c "
-import os
-from pdf2image import convert_from_path
+# PyScriptでpdf2imageを使ってPDFを画像に変換
+python3 "$SRC_DIR/pdf_to_images.py" "$SAMPLE_PDF" --output_dir "$SAMPLE_IMAGES_DIR" --dpi "$DPI" --format "$FORMAT"
 
-# PDFを画像に変換
-images = convert_from_path('$SAMPLE_PDF', dpi=$DPI)
-
-# 画像を保存
-for i, image in enumerate(images):
-    image.save(os.path.join('$SAMPLE_IMAGES_DIR', f'page_{i+1:03d}.$FORMAT'), '$FORMAT')
-
-print(f'{len(images)}ページの画像を {len(images)} 個の $FORMAT ファイルに変換しました')
-"
-
-# ステップ3: OCR処理
-echo "ステップ3: OCR処理を実行しています..."
-SAMPLE_OCR_DIR="$OCR_DIR/$SAMPLE_BASENAME"
-mkdir -p "$SAMPLE_OCR_DIR"
-
-# LLMベースのOCRを使用する場合
-if [ "$USE_LLM" = true ]; then
-    if [ "$USE_CLAUDE" = true ]; then
-        echo "Claude APIを使用してOCR処理を実行します..."
-        # サンプルPDFをMarkdownに変換
-        python3 "$SRC_DIR/pdf2md_claude.py" "$SAMPLE_PDF" "$SAMPLE_OCR_DIR/${SAMPLE_BASENAME}_ocr.md"
-    else
-        echo "Gemini APIを使用してOCR処理を実行します..."
-        # サンプルPDFをMarkdownに変換
-        python3 "$SRC_DIR/pdf2md_gemini.py" "$SAMPLE_PDF" "$SAMPLE_OCR_DIR/${SAMPLE_BASENAME}_ocr.md"
-    fi
-else
-    echo "従来のOCR処理を実行します..."
-    # ここに従来のOCR処理のコードを記述
-    echo "注意: 現在の実装ではLLMベースのOCRのみサポートしています。--use-llmオプションを指定してください。"
+if [ $? -ne 0 ]; then
+    echo "エラー: 画像変換に失敗しました"
     exit 1
+fi
+
+# ステップ3: OCR処理 または 直接KaTeX変換
+SAMPLE_OCR_DIR="$OCR_DIR/$SAMPLE_BASENAME"
+SAMPLE_MARKDOWN_DIR="$MARKDOWN_DIR/$SAMPLE_BASENAME"
+mkdir -p "$SAMPLE_OCR_DIR" "$SAMPLE_MARKDOWN_DIR"
+
+if [ "$DIRECT_KATEX" = true ]; then
+    echo "ステップ3: 画像から直接KaTeX形式に変換しています..."
+    for img_file in "$SAMPLE_IMAGES_DIR"/*.$FORMAT; do
+        base_name=$(basename "$img_file" .$FORMAT)
+        python3 "$SRC_DIR/ocr_to_markdown.py" "$img_file" "$SAMPLE_MARKDOWN_DIR/${base_name}.md" --direct-image-to-katex
+    done
+else
+    if [ "$USE_LLM" = true ]; then
+        if [ "$USE_CLAUDE" = true ]; then
+            echo "ステップ3: Claude APIを使用してOCR処理を実行します..."
+            python3 "$SRC_DIR/pdf2md_claude.py" "$SAMPLE_PDF" "$SAMPLE_OCR_DIR/${SAMPLE_BASENAME}_ocr.md"
+            
+            # Markdown変換
+            echo "ステップ4: Markdown形式に変換しています..."
+            python3 "$SRC_DIR/ocr_to_markdown.py" "$SAMPLE_OCR_DIR" "$SAMPLE_MARKDOWN_DIR" --image-base-path "../images/$SAMPLE_BASENAME"
+            
+            # 画像解析
+            echo "ステップ5: Claude APIで画像解析を実行します..."
+            CLAUDE_OUTPUT_DIR="$CLAUDE_DIR/$SAMPLE_BASENAME"
+            mkdir -p "$CLAUDE_OUTPUT_DIR"
+            python3 "$SRC_DIR/claude_image_analyzer.py" --input "$SAMPLE_IMAGES_DIR" --output "$CLAUDE_OUTPUT_DIR"
+        else
+            echo "ステップ3: Gemini APIを使用してOCR処理を実行します..."
+            python3 "$SRC_DIR/pdf2md_gemini.py" "$SAMPLE_PDF" "$SAMPLE_OCR_DIR/${SAMPLE_BASENAME}_ocr.md"
+            
+            # Markdown変換
+            echo "ステップ4: Markdown形式に変換しています..."
+            python3 "$SRC_DIR/ocr_to_markdown.py" "$SAMPLE_OCR_DIR" "$SAMPLE_MARKDOWN_DIR" --image-base-path "../images/$SAMPLE_BASENAME"
+            
+            # 画像解析
+            echo "ステップ5: Gemini APIで画像解析を実行します..."
+            GEMINI_OUTPUT_DIR="$GEMINI_DIR/$SAMPLE_BASENAME"
+            mkdir -p "$GEMINI_OUTPUT_DIR"
+            python3 "$SRC_DIR/gemini_image_analyzer.py" --input "$SAMPLE_IMAGES_DIR" --output "$GEMINI_OUTPUT_DIR"
+        fi
+    else
+        echo "ステップ3: ローカルOCR処理を実行します..."
+        python3 "$SRC_DIR/ocr_engine.py" "$SAMPLE_IMAGES_DIR" "$SAMPLE_OCR_DIR"
+        
+        # Markdown変換
+        echo "ステップ4: Markdown形式に変換しています..."
+        python3 "$SRC_DIR/ocr_to_markdown.py" "$SAMPLE_OCR_DIR" "$SAMPLE_MARKDOWN_DIR" --image-base-path "../images/$SAMPLE_BASENAME"
+    fi
 fi
 
 echo "========================================================"
@@ -220,4 +259,12 @@ echo "========================================================"
 echo "サンプルPDF: $SAMPLE_PDF"
 echo "サンプル画像: $SAMPLE_IMAGES_DIR"
 echo "OCR結果: $SAMPLE_OCR_DIR"
+echo "Markdown結果: $SAMPLE_MARKDOWN_DIR"
+
+if [ "$USE_CLAUDE" = true ]; then
+    echo "Claude解析結果: $CLAUDE_DIR/$SAMPLE_BASENAME"
+elif [ "$USE_GEMINI" = true ] && [ "$USE_LLM" = true ]; then
+    echo "Gemini解析結果: $GEMINI_DIR/$SAMPLE_BASENAME"
+fi
+
 echo "========================================================" 
