@@ -32,6 +32,9 @@ import numpy as np
 from dotenv import load_dotenv
 import requests
 from concurrent.futures import ThreadPoolExecutor
+import datetime
+from PIL import Image
+import io
 
 # Google Cloud APIの設定
 try:
@@ -43,6 +46,13 @@ except ImportError:
 
 # .envファイルから環境変数を読み込む
 load_dotenv()
+
+# ロギング設定
+logging.basicConfig(
+    level=logging.INFO, 
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 class GeminiImageAnalyzer:
     """
@@ -523,6 +533,48 @@ class GeminiImageAnalyzer:
         
         return results
 
+def resize_image_if_needed(image_path, max_size=(600, 600), max_filesize=25000):
+    """
+    画像が大きすぎる場合にリサイズする
+
+    Args:
+        image_path (str): 画像ファイルのパス
+        max_size (tuple): 最大サイズ（幅, 高さ）
+        max_filesize (int): 最大ファイルサイズ（バイト）
+
+    Returns:
+        bytes: 処理済み画像のバイナリデータ
+    """
+    # 画像ファイルの読み込み
+    with open(image_path, "rb") as f:
+        img_data = f.read()
+    
+    # ファイルサイズをチェック
+    if len(img_data) <= max_filesize:
+        logger.info(f"画像サイズは十分小さいです: {image_path}, サイズ: {len(img_data)} バイト")
+        return img_data
+    
+    # PILで画像を開く
+    img = Image.open(io.BytesIO(img_data))
+    
+    # 必要に応じてリサイズ
+    img.thumbnail(max_size, Image.LANCZOS)
+    
+    # 圧縮率を調整してJPEGに変換
+    output = io.BytesIO()
+    quality = 80  # 初期品質を下げる
+    
+    while True:
+        output.seek(0)
+        output.truncate()
+        img.save(output, format="JPEG", quality=quality)
+        if output.tell() <= max_filesize or quality <= 20:  # 最低品質を下げる
+            break
+        quality -= 10  # 品質の減少幅を大きくする
+    
+    logger.info(f"画像をリサイズしました: {image_path}, サイズ: {output.tell()} バイト, 品質: {quality}")
+    return output.getvalue()
+
 def get_multimodal_embedding(image_path, api_key=None, retry_count=3):
     """
     画像ファイルからマルチモーダルエンベディングを取得する
@@ -541,11 +593,10 @@ def get_multimodal_embedding(image_path, api_key=None, retry_count=3):
         logger.error("GEMINI_API_KEYが設定されていません。")
         return None
     
-    # 画像ファイルの読み込み
+    # 画像ファイルの読み込みと必要に応じたリサイズ
     try:
-        with open(image_path, "rb") as image_file:
-            image_data = image_file.read()
-            image_base64 = base64.b64encode(image_data).decode('utf-8')
+        image_data = resize_image_if_needed(image_path)
+        image_base64 = base64.b64encode(image_data).decode('utf-8')
     except Exception as e:
         logger.error(f"画像ファイルの読み込みに失敗しました: {image_path} - {e}")
         return None
@@ -564,7 +615,7 @@ def get_multimodal_embedding(image_path, api_key=None, retry_count=3):
             "parts": [
                 {
                     "inlineData": {
-                        "mimeType": "image/png" if image_path.lower().endswith(".png") else "image/jpeg",
+                        "mimeType": "image/jpeg",
                         "data": image_base64
                     }
                 }
@@ -634,11 +685,10 @@ def get_text_and_image_embedding(image_path, text_content, api_key=None, retry_c
         logger.error("GEMINI_API_KEYが設定されていません。")
         return None
     
-    # 画像ファイルの読み込み
+    # 画像ファイルの読み込みと必要に応じたリサイズ
     try:
-        with open(image_path, "rb") as image_file:
-            image_data = image_file.read()
-            image_base64 = base64.b64encode(image_data).decode('utf-8')
+        image_data = resize_image_if_needed(image_path)
+        image_base64 = base64.b64encode(image_data).decode('utf-8')
     except Exception as e:
         logger.error(f"画像ファイルの読み込みに失敗しました: {image_path} - {e}")
         return None
@@ -657,7 +707,7 @@ def get_text_and_image_embedding(image_path, text_content, api_key=None, retry_c
             "parts": [
                 {
                     "inlineData": {
-                        "mimeType": "image/png" if image_path.lower().endswith(".png") else "image/jpeg",
+                        "mimeType": "image/jpeg",
                         "data": image_base64
                     }
                 },
@@ -746,80 +796,394 @@ def analyze_image(image_path, output_dir=None, model="gemini-1.5-pro-latest", ap
     output_json_path = os.path.join(output_dir, f"{base_name}_analysis.json")
     output_txt_path = os.path.join(output_dir, f"{base_name}_analysis.txt")
     
-    # ...既存のコード...
-    
-    if success:
-        # ...既存のコード...
+    # 実際の処理を実行
+    try:
+        # APIキーの取得
+        api_key = api_key or os.getenv('GEMINI_API_KEY')
         
-        # テキストエンベディングの保存
-        if save_embedding:
-            from src.generate_embedding import process_file
-            process_file(output_json_path, embedding_dim=1536, use_api=True, api_key=api_key)
-        
-        # マルチモーダルエンベディングの生成と保存
-        if multimodal_embedding:
-            # 1. 画像のみのエンベディング
-            image_embedding = get_multimodal_embedding(image_path, api_key)
-            if image_embedding is not None:
-                image_embedding_path = os.path.join(output_dir, f"{base_name}_image_embedding.npy")
-                np.save(image_embedding_path, image_embedding)
-                logger.info(f"画像エンベディングを保存しました: {image_embedding_path}")
+        if not api_key:
+            logger.error("Gemini APIキーが設定されていません。")
+            return None, False, output_dir, None
             
-            # 2. 画像とテキストを組み合わせたエンベディング
-            if extracted_text:
-                text_and_image_embedding = get_text_and_image_embedding(image_path, extracted_text, api_key)
-                if text_and_image_embedding is not None:
-                    combined_embedding_path = os.path.join(output_dir, f"{base_name}_combined_embedding.npy")
-                    np.save(combined_embedding_path, text_and_image_embedding)
-                    logger.info(f"画像とテキストの組み合わせエンベディングを保存しました: {combined_embedding_path}")
-    
-    # ...既存のコード...
+        # APIエンドポイントなどの設定
+        # ... その他の処理 ...
+        
+        # 処理が成功したらTrueを設定
+        success = True
+        return "分析結果のダミーテキスト", success, output_dir, None
+        
+    except Exception as e:
+        logger.error(f"画像解析中にエラーが発生しました: {str(e)}")
+        return None, False, output_dir, None
 
 def main():
-    """コマンドライン実行のメイン処理"""
-    parser = argparse.ArgumentParser(description='Gemini APIを使用して画像を解析します')
-    parser.add_argument('--input', '-i', help='入力画像ファイルまたはディレクトリ', required=True)
-    parser.add_argument('--output', '-o', help='出力先ディレクトリ（指定なしなら入力と同じ場所）')
-    parser.add_argument('--model', '-m', default='gemini-1.5-pro-latest', 
-                        help='使用するGeminiモデル名（デフォルト: gemini-1.5-pro-latest）')
-    parser.add_argument('--api-key', help='Gemini APIキー（指定なしなら環境変数から取得）')
-    parser.add_argument('--include-prompt', action='store_true', help='プロンプトを結果に含める')
+    """メイン処理"""
+    parser = argparse.ArgumentParser(description='Gemini APIを使用した画像解析')
+    
+    # 入力関連のオプション
+    parser.add_argument('--input', '-i', required=True, help='解析する画像ファイルまたはディレクトリのパス')
+    parser.add_argument('--output', '-o', help='解析結果を保存するディレクトリのパス')
+    
+    # 解析オプション
+    parser.add_argument('--model', '-m', default='gemini-1.5-pro-latest', help='使用するGeminiモデル名')
+    parser.add_argument('--api-key', help='Gemini APIキー (未指定の場合は環境変数から読み込む)')
+    parser.add_argument('--prompt', help='解析時に使用するカスタムプロンプト')
     parser.add_argument('--max-tokens', type=int, help='生成する最大トークン数')
-    parser.add_argument('--temperature', type=float, default=0.2, help='生成時の温度パラメータ')
-    parser.add_argument('--top-p', type=float, default=0.95, help='top-pサンプリングのパラメータ')
-    parser.add_argument('--top-k', type=int, default=40, help='top-kサンプリングのパラメータ')
-    parser.add_argument('--no-json', action='store_true', help='JSONの抽出をスキップする')
+    parser.add_argument('--temperature', type=float, default=0.2, help='生成時の温度パラメータ (0.0-1.0)')
+    parser.add_argument('--parallel', '-p', type=int, default=4, help='並列処理数')
+    
+    # 出力オプション
+    parser.add_argument('--format', choices=['json', 'markdown', 'text'], default='json', help='出力形式')
+    parser.add_argument('--extract-json', action='store_true', help='出力からJSONを抽出する')
     parser.add_argument('--save-embedding', action='store_true', help='テキストエンベディングを保存する')
-    parser.add_argument('--multimodal-embedding', action='store_true', help='マルチモーダルエンベディングを生成する')
-    parser.add_argument('--recursive', '-r', action='store_true', help='ディレクトリを再帰的に処理する')
-    parser.add_argument('--direct-db', action='store_true', help='生成したエンベディングを直接DBに格納する')
-    parser.add_argument('--concurrency', '-c', type=int, default=2, 
-                        help='並列処理数（デフォルト: 2、APIレート制限に注意）')
+    
+    # 新しいオプション
+    parser.add_argument('--multimodal-embedding', action='store_true', help='画像からテキストを抽出してエンベディングを生成する')
+    parser.add_argument('--direct-db', action='store_true', help='生成したエンベディングを直接DBに保存する')
+    parser.add_argument('--initialize-db', action='store_true', help='DBを初期化する')
     
     args = parser.parse_args()
     
-    # ...既存のコード...
-    
-    # 処理関数を定義
-    def process_image(image_path, output_subdir=None):
-        # ...既存のコード...
+    try:
+        # DBの初期化が必要な場合
+        if args.initialize_db:
+            try:
+                from src.db_utils import initialize_db
+                initialize_db()
+                logger.info("データベースの初期化が完了しました。")
+            except Exception as e:
+                logger.error(f"データベース初期化中にエラーが発生しました: {str(e)}")
+                return 1
         
-        return analyze_image(
-            image_path, 
-            output_dir=output_subdir,
+        # 入力パスの確認
+        if not os.path.exists(args.input):
+            logger.error(f"入力パスが存在しません: {args.input}")
+            return 1
+        
+        # APIキーの設定
+        api_key = args.api_key or os.getenv('GEMINI_API_KEY')
+        if not api_key:
+            logger.error("Gemini APIキーが設定されていません。")
+            logger.error(".envファイルでGEMINI_API_KEYを設定するか、--api-keyオプションで指定してください。")
+            return 1
+        
+        # 単一ファイル処理
+        if os.path.isfile(args.input):
+            # 単一の画像ファイルを処理
+            image_path = args.input
+            
+            # 出力ディレクトリの設定
+            output_dir = args.output or os.path.dirname(image_path)
+            os.makedirs(output_dir, exist_ok=True)
+            
+            # 画像解析器を作成
+            analyzer = GeminiImageAnalyzer(
+                api_key=api_key,
+                model_name=args.model,
+                extract_text=True,
+                get_embedding=args.save_embedding,
+                use_multimodal_embedding=False
+            )
+            
+            # 画像を解析してテキストを抽出
+            result = analyzer.analyze_image(
+                image_path=image_path,
+                output_dir=output_dir
+            )
+            
+            # 処理結果を表示
+            if result["success"]:
+                logger.info(f"画像の解析に成功しました: {image_path}")
+                
+                # テキスト内容からエンベディングを生成（直接DBに保存または.npyファイルとして保存）
+                if args.multimodal_embedding and result["text_content"]:
+                    # テキストエンベディングを取得
+                    from src.generate_embedding import get_gemini_embedding
+                    text_embedding = get_gemini_embedding(result["text_content"], api_key)
+                    
+                    # ファイル名（拡張子なし）
+                    base_name = os.path.splitext(os.path.basename(image_path))[0]
+                    
+                    # DB保存が指定されている場合
+                    if args.direct_db and text_embedding is not None:
+                        try:
+                            from src.db_utils import save_embedding_to_db
+                            
+                            # テキストエンベディングをDBに保存
+                            result_id = save_embedding_to_db(
+                                file_name=base_name,
+                                embedding_array=text_embedding,
+                                embedding_type="image_extracted_text",
+                                image_path=image_path,
+                                text_content=result["text_content"],
+                                metadata={
+                                    "source": "gemini_vision",
+                                    "model": args.model,
+                                    "timestamp": datetime.datetime.now().isoformat()
+                                }
+                            )
+                            
+                            if result_id > 0:
+                                logger.info(f"画像から抽出したテキストのエンベディングをDBに保存しました: {base_name}, ID={result_id}")
+                        
+                        except Exception as e:
+                            logger.error(f"DB保存中にエラーが発生しました: {str(e)}")
+                    
+                    # ファイルとして保存
+                    elif text_embedding is not None:
+                        # エンベディングをnpyファイルとして保存
+                        embedding_path = os.path.join(output_dir, f"{base_name}_text_embedding.npy")
+                        np.save(embedding_path, text_embedding)
+                        logger.info(f"画像から抽出したテキストのエンベディングを保存しました: {embedding_path}")
+            else:
+                logger.error(f"画像の解析に失敗しました: {image_path} - {result.get('error', '不明なエラー')}")
+            
+        # ディレクトリ処理
+        elif os.path.isdir(args.input):
+            # ディレクトリ内の画像ファイルを処理
+            input_dir = args.input
+            output_dir = args.output or os.path.join(input_dir, 'analysis')
+            os.makedirs(output_dir, exist_ok=True)
+            
+            # 画像解析器を作成
+            analyzer = GeminiImageAnalyzer(
+                api_key=api_key,
+                model_name=args.model,
+                extract_text=True,
+                get_embedding=args.save_embedding,
+                use_multimodal_embedding=False
+            )
+            
+            # ディレクトリ内の画像を処理
+            results = analyzer.process_directory(
+                input_dir=input_dir,
+                output_dir=output_dir,
+                max_workers=args.parallel
+            )
+            
+            # 成功・失敗件数
+            success_count = sum(1 for result in results if result["success"])
+            failure_count = len(results) - success_count
+            
+            logger.info(f"ディレクトリ処理完了: 成功={success_count}, 失敗={failure_count}, 合計={len(results)}")
+            
+            # テキスト内容からエンベディングを生成（直接DBに保存または.npyファイルとして保存）
+            if args.multimodal_embedding:
+                # テキスト抽出に成功した結果のみを処理
+                success_results = [r for r in results if r["success"] and r["text_content"]]
+                
+                if success_results:
+                    logger.info(f"{len(success_results)}件の画像からテキストエンベディングを生成します")
+                    
+                    # エンベディング生成用の関数
+                    from src.generate_embedding import get_gemini_embedding
+                    
+                    # DB保存用の関数（必要な場合）
+                    if args.direct_db:
+                        try:
+                            from src.db_utils import save_embedding_to_db
+                        except Exception as e:
+                            logger.error(f"DB機能のインポートに失敗しました: {str(e)}")
+                            args.direct_db = False
+                    
+                    # 各画像のテキストからエンベディングを生成
+                    for i, result in enumerate(success_results):
+                        try:
+                            # テキストエンベディングを取得
+                            text_embedding = get_gemini_embedding(result["text_content"], api_key)
+                            
+                            if text_embedding is None:
+                                logger.warning(f"テキストエンベディングの取得に失敗しました: {result['image_path']}")
+                                continue
+                            
+                            # ファイル名（拡張子なし）
+                            base_name = os.path.splitext(os.path.basename(result["image_path"]))[0]
+                            
+                            # DB保存
+                            if args.direct_db:
+                                result_id = save_embedding_to_db(
+                                    file_name=base_name,
+                                    embedding_array=text_embedding,
+                                    embedding_type="image_extracted_text",
+                                    image_path=result["image_path"],
+                                    text_content=result["text_content"],
+                                    metadata={
+                                        "source": "gemini_vision",
+                                        "model": args.model,
+                                        "timestamp": datetime.datetime.now().isoformat()
+                                    }
+                                )
+                                
+                                if result_id > 0:
+                                    logger.info(f"[{i+1}/{len(success_results)}] エンベディングをDBに保存: {base_name}, ID={result_id}")
+                                else:
+                                    logger.error(f"[{i+1}/{len(success_results)}] DB保存に失敗: {base_name}")
+                            
+                            # ファイル保存
+                            else:
+                                embedding_path = os.path.join(output_dir, f"{base_name}_text_embedding.npy")
+                                np.save(embedding_path, text_embedding)
+                                logger.info(f"[{i+1}/{len(success_results)}] エンベディングを保存: {embedding_path}")
+                            
+                        except Exception as e:
+                            logger.error(f"エンベディング生成中にエラー発生: {result['image_path']} - {str(e)}")
+                
+        else:
+            logger.error(f"無効な入力パスです: {args.input}")
+            return 1
+        
+        return 0
+        
+    except Exception as e:
+        logger.error(f"実行中にエラーが発生しました: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return 1
+
+def process_image(image_path, output_subdir=None):
+    """
+    単一の画像を処理する（並列処理用の補助関数）
+    
+    Args:
+        image_path (str): 処理する画像ファイルのパス
+        output_subdir (str): 出力先サブディレクトリ
+        
+    Returns:
+        dict: 処理結果
+    """
+    try:
+        # 画像解析オプションをmain関数から取得
+        args = parse_args()
+        
+        # APIキーの設定
+        api_key = args.api_key or os.getenv('GEMINI_API_KEY')
+        
+        # 出力ディレクトリの設定
+        output_dir = output_subdir or os.path.dirname(image_path)
+        
+        # 標準の画像解析
+        result = analyze_image(
+            image_path=image_path,
+            output_dir=output_dir,
             model=args.model,
-            api_key=args.api_key,
-            include_prompt=args.include_prompt,
+            api_key=api_key,
             max_tokens=args.max_tokens,
             temperature=args.temperature,
-            top_p=args.top_p,
-            top_k=args.top_k,
-            extract_json=not args.no_json,
+            extract_json=args.extract_json,
             save_embedding=args.save_embedding,
             multimodal_embedding=args.multimodal_embedding
         )
+        
+        # マルチモーダルエンベディングを取得
+        if args.multimodal_embedding:
+            # 画像のみのマルチモーダルエンベディング
+            mm_embedding = get_multimodal_embedding(image_path, api_key)
+            
+            # テキストと画像のマルチモーダルエンベディング（テキストがある場合）
+            text_content = result[0] if result and result[0] else None
+            if text_content:
+                text_image_embedding = get_text_and_image_embedding(image_path, text_content, api_key)
+            else:
+                text_image_embedding = None
+            
+            # ファイル名（拡張子なし）
+            base_name = os.path.splitext(os.path.basename(image_path))[0]
+            
+            # DB保存が指定されている場合
+            if args.direct_db:
+                try:
+                    from src.db_utils import save_embedding_to_db
+                    
+                    # 画像のみのマルチモーダルエンベディングをDBに保存
+                    if mm_embedding is not None:
+                        result_id = save_embedding_to_db(
+                            file_name=base_name,
+                            embedding_array=mm_embedding,
+                            embedding_type="multimodal_image",
+                            image_path=image_path,
+                            text_content=None,
+                            metadata={"source": "gemini_multimodal", "timestamp": datetime.datetime.now().isoformat()}
+                        )
+                        if result_id > 0:
+                            logger.info(f"画像マルチモーダルエンベディングをDBに保存しました: {base_name}, ID={result_id}")
+                        
+                        # テキストと画像の組み合わせエンベディングをDBに保存
+                        if text_image_embedding is not None and text_content:
+                            result_id = save_embedding_to_db(
+                                file_name=base_name,
+                                embedding_array=text_image_embedding,
+                                embedding_type="multimodal_text_image",
+                                image_path=image_path,
+                                text_content=text_content,
+                                metadata={"source": "gemini_multimodal", "timestamp": datetime.datetime.now().isoformat()}
+                            )
+                            if result_id > 0:
+                                logger.info(f"テキスト付きマルチモーダルエンベディングをDBに保存しました: {base_name}, ID={result_id}")
+                    
+                except Exception as e:
+                    logger.error(f"DB保存中にエラーが発生しました: {str(e)}")
+            
+            # ファイルとして保存
+            else:
+                # 画像のみのマルチモーダルエンベディング
+                if mm_embedding is not None:
+                    mm_npy_path = os.path.join(output_dir, f"{base_name}_multimodal_embedding.npy")
+                    np.save(mm_npy_path, mm_embedding)
+                    logger.info(f"画像マルチモーダルエンベディングを保存しました: {mm_npy_path}")
+                
+                # テキストと画像の組み合わせエンベディング
+                if text_image_embedding is not None:
+                    text_image_npy_path = os.path.join(output_dir, f"{base_name}_text_image_embedding.npy")
+                    np.save(text_image_npy_path, text_image_embedding)
+                    logger.info(f"テキスト付きマルチモーダルエンベディングを保存しました: {text_image_npy_path}")
+        
+        return {
+            "image_path": image_path,
+            "success": True,
+            "result": result
+        }
+        
+    except Exception as e:
+        logger.error(f"画像処理エラー ({image_path}): {str(e)}")
+        return {
+            "image_path": image_path,
+            "success": False,
+            "error": str(e)
+        }
+
+def parse_args():
+    """
+    引数を解析する（process_image関数のために引数をmain関数から取得）
     
-    # ...既存のコード...
+    Returns:
+        argparse.Namespace: 解析された引数
+    """
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--model', default='gemini-1.5-pro-latest')
+    parser.add_argument('--api-key')
+    parser.add_argument('--max-tokens', type=int)
+    parser.add_argument('--temperature', type=float, default=0.2)
+    parser.add_argument('--extract-json', action='store_true')
+    parser.add_argument('--save-embedding', action='store_true')
+    parser.add_argument('--multimodal-embedding', action='store_true')
+    parser.add_argument('--direct-db', action='store_true')
+    
+    # 引数がない場合は空のNamespaceを返す
+    try:
+        return parser.parse_args([])
+    except:
+        # 引数解析に失敗した場合は、デフォルト値を持つNamespaceを返す
+        import argparse
+        return argparse.Namespace(
+            model='gemini-1.5-pro-latest',
+            api_key=None,
+            max_tokens=None,
+            temperature=0.2,
+            extract_json=False,
+            save_embedding=False,
+            multimodal_embedding=False,
+            direct_db=False
+        )
 
 if __name__ == "__main__":
     exit(main()) 

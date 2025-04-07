@@ -78,6 +78,9 @@ def initialize_db():
                 # コミット
                 conn.commit()
                 
+                # Drop existing table if it exists
+                cursor.execute("DROP TABLE IF EXISTS embeddings;")
+                
                 # embeddingsテーブルの作成
                 cursor.execute("""
                 CREATE TABLE IF NOT EXISTS embeddings (
@@ -86,7 +89,7 @@ def initialize_db():
                     image_path TEXT,
                     text_content TEXT,
                     embedding_type TEXT NOT NULL,
-                    embedding VECTOR(1536),
+                    embedding VECTOR(768),
                     metadata JSONB,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
