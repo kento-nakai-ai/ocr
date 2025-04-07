@@ -20,6 +20,7 @@ import time
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 from dotenv import load_dotenv
+import datetime
 
 # 環境変数の読み込み
 load_dotenv()
@@ -109,7 +110,7 @@ def get_gemini_embedding(text, api_key=None, retry_count=3):
     
     return None
 
-def process_file(json_path, embedding_dim=1536, use_api=True, api_key=None):
+def process_file(json_path, embedding_dim=1536, use_api=True, api_key=None, direct_db=False):
     """
     単一のJSONファイルからエンベディングを生成して保存する
     
@@ -118,6 +119,7 @@ def process_file(json_path, embedding_dim=1536, use_api=True, api_key=None):
         embedding_dim (int): 生成するエンベディングの次元数
         use_api (bool): Gemini APIを使用するかどうか
         api_key (str): Gemini APIキー
+        direct_db (bool): エンベディングを直接DBに保存するかどうか
         
     Returns:
         bool: 処理成功ならTrue、失敗ならFalse
@@ -163,16 +165,68 @@ def process_file(json_path, embedding_dim=1536, use_api=True, api_key=None):
             embedding = np.random.normal(0, 1/np.sqrt(embedding_dim), embedding_dim)
             embedding = embedding / np.linalg.norm(embedding)  # 正規化
         
-        # numpyファイルとして保存
-        np.save(npy_path, embedding)
-        logger.info(f"エンベディングを生成しました: {json_path} → {npy_path}")
+        # エンベディングをDBに直接保存する場合
+        if direct_db:
+            try:
+                from src.db_utils import save_embedding_to_db
+                
+                # ファイル名を取得
+                file_name = os.path.basename(base_name)
+                
+                # 画像パスを取得（JSONファイルから）
+                image_path = data.get('image_path', '')
+                
+                # メタデータを取得（JSONファイルから）
+                metadata = {
+                    "source_json": json_path,
+                    "timestamp": datetime.datetime.now().isoformat()
+                }
+                
+                # 問題情報がある場合はメタデータに追加
+                problems_data = None
+                if '```json' in text_content and '```' in text_content:
+                    try:
+                        json_part = text_content.split('```json')[1].split('```')[0].strip()
+                        problems_data = json.loads(json_part)
+                        metadata["problems"] = problems_data
+                    except:
+                        pass
+                
+                # DBに保存
+                result_id = save_embedding_to_db(
+                    file_name=file_name,
+                    embedding_array=embedding,
+                    embedding_type="text",
+                    image_path=image_path,
+                    text_content=text_content,
+                    metadata=metadata
+                )
+                
+                if result_id > 0:
+                    logger.info(f"エンベディングをDBに保存しました: {file_name}, ID={result_id}")
+                else:
+                    logger.error(f"エンベディングのDB保存に失敗しました: {file_name}")
+                    # 失敗した場合はnpyファイルとして保存する
+                    np.save(npy_path, embedding)
+                    logger.info(f"代わりにnpyファイルとして保存しました: {npy_path}")
+            
+            except Exception as e:
+                logger.error(f"DB保存中にエラーが発生しました: {str(e)}")
+                # エラーが発生した場合はnpyファイルとして保存
+                np.save(npy_path, embedding)
+                logger.info(f"代わりにnpyファイルとして保存しました: {npy_path}")
+        else:
+            # numpyファイルとして保存
+            np.save(npy_path, embedding)
+            logger.info(f"エンベディングを生成しました: {json_path} → {npy_path}")
+        
         return True
         
     except Exception as e:
         logger.error(f"ファイル処理エラー ({json_path}): {str(e)}")
         return False
 
-def process_directory(directory_path, max_workers=4, embedding_dim=1536, use_api=True, api_key=None):
+def process_directory(directory_path, max_workers=4, embedding_dim=1536, use_api=True, api_key=None, direct_db=False):
     """
     ディレクトリ内のすべてのJSONファイルを処理
     
@@ -182,6 +236,7 @@ def process_directory(directory_path, max_workers=4, embedding_dim=1536, use_api
         embedding_dim (int): 生成するエンベディングの次元数
         use_api (bool): Gemini APIを使用するかどうか
         api_key (str): Gemini APIキー
+        direct_db (bool): エンベディングを直接DBに保存するかどうか
         
     Returns:
         tuple: (成功件数, 失敗件数)
@@ -217,7 +272,8 @@ def process_directory(directory_path, max_workers=4, embedding_dim=1536, use_api
                 str(json_file), 
                 embedding_dim,
                 use_api,
-                api_key
+                api_key,
+                direct_db
             )
             futures[future] = str(json_file)
         
@@ -249,10 +305,22 @@ def main():
     parser.add_argument('--parallel', '-p', type=int, default=4, help='並列処理数（デフォルト: 4）')
     parser.add_argument('--api-key', help='Gemini APIキー（指定しない場合は環境変数から取得）')
     parser.add_argument('--no-api', action='store_true', help='Gemini APIを使用せず、ダミーエンベディングを生成する')
+    parser.add_argument('--direct-db', action='store_true', help='エンベディングを直接DBに保存する')
+    parser.add_argument('--initialize-db', action='store_true', help='DBを初期化する（pgvector拡張のインストールとテーブル作成）')
     
     args = parser.parse_args()
     
     try:
+        # DBの初期化が必要な場合
+        if args.initialize_db:
+            try:
+                from src.db_utils import initialize_db
+                initialize_db()
+                logger.info("データベースの初期化が完了しました。")
+            except Exception as e:
+                logger.error(f"データベース初期化中にエラーが発生しました: {str(e)}")
+                return 1
+        
         # 入力パスの確認
         if not os.path.exists(args.input):
             logger.error(f"入力パスが存在しません: {args.input}")
@@ -274,7 +342,8 @@ def main():
                     args.input, 
                     args.dimension,
                     use_api,
-                    api_key
+                    api_key,
+                    args.direct_db
                 )
                 return 0 if success else 1
             else:
@@ -287,7 +356,8 @@ def main():
                 max_workers=args.parallel,
                 embedding_dim=args.dimension,
                 use_api=use_api,
-                api_key=api_key
+                api_key=api_key,
+                direct_db=args.direct_db
             )
             
             return 0 if success_count > 0 else 1

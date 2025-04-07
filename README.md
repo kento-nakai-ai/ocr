@@ -323,3 +323,31 @@ python src/generate_embedding.py --input analysis_results.json --no-api
 ## ライセンス
 
 このプロジェクトはMITライセンスの下で公開されています。
+
+## エンベディング分析ツール
+
+エンベディングの距離分析と類似/非類似問題の比較を行うためのツールが提供されています。
+
+### エンベディング距離分析
+
+`embedding_analyzer.py`を使用して、エンベディング間の距離を計算し、可視化します。
+
+```bash
+# エンベディングの分析
+python src/embedding_analyzer.py --input data/embedding --output data/embedding/analysis --mode analyze
+
+# 特定のエンベディングファイルに対して類似/非類似ファイルを探す
+python src/embedding_analyzer.py --input data/embedding/令和5年度_page_046_embedding.npy --output data/embedding/samples --mode sample
+```
+
+### 類似/非類似問題の比較
+
+`compare_samples.py`を使用して、類似問題と非類似問題を視覚的に比較します。
+
+```bash
+# 比較レポートを作成
+python src/compare_samples.py --input data/embedding/samples/sample_files.json --output data/embedding/comparison
+```
+
+これにより、指定された問題に対して類似度が高い問題と低い問題を比較したレポートが生成されます。
+レポートには問題の画像とマークダウンテキストが含まれます。

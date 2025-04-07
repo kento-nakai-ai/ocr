@@ -52,6 +52,14 @@ data/*
 !data/pdf/
 !data/claude/
 
+# データファイル
+data/embedding/**/*.npy
+data/embedding/**/*.json
+data/images/**/*.png
+data/ocr/**/*.txt
+data/pdf/**/*.pdf
+data/pdf/**/*.txt
+
 # macOS関連
 .DS_Store
 .AppleDouble
@@ -86,4 +94,8 @@ logs
 *.log
 npm-debug.log*
 yarn-debug.log*
-yarn-error.log* 
+yarn-error.log*
+
+# 認証ファイル
+y
+y.pub 

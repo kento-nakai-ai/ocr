@@ -523,104 +523,303 @@ class GeminiImageAnalyzer:
         
         return results
 
+def get_multimodal_embedding(image_path, api_key=None, retry_count=3):
+    """
+    画像ファイルからマルチモーダルエンベディングを取得する
+
+    Args:
+        image_path (str): 画像ファイルのパス
+        api_key (str): Gemini APIキー。未指定の場合は環境変数から読み込む
+        retry_count (int): 失敗時の再試行回数
+        
+    Returns:
+        numpy.ndarray: マルチモーダルエンベディングベクトル。失敗時はNone
+    """
+    # APIキーの取得
+    api_key = api_key or os.getenv('GEMINI_API_KEY')
+    if not api_key:
+        logger.error("GEMINI_API_KEYが設定されていません。")
+        return None
+    
+    # 画像ファイルの読み込み
+    try:
+        with open(image_path, "rb") as image_file:
+            image_data = image_file.read()
+            image_base64 = base64.b64encode(image_data).decode('utf-8')
+    except Exception as e:
+        logger.error(f"画像ファイルの読み込みに失敗しました: {image_path} - {e}")
+        return None
+    
+    # APIエンドポイントとヘッダー
+    embedding_api_url = "https://generativelanguage.googleapis.com/v1beta/models/embedding-001:embedContent"
+    headers = {
+        "Content-Type": "application/json",
+        "x-goog-api-key": api_key
+    }
+    
+    # リクエストデータ（画像のみのマルチモーダルリクエスト）
+    data = {
+        "model": "embedding-001",
+        "content": {
+            "parts": [
+                {
+                    "inlineData": {
+                        "mimeType": "image/png" if image_path.lower().endswith(".png") else "image/jpeg",
+                        "data": image_base64
+                    }
+                }
+            ]
+        }
+    }
+    
+    # リトライループ
+    for attempt in range(retry_count):
+        try:
+            # APIリクエスト送信
+            response = requests.post(
+                embedding_api_url,
+                headers=headers,
+                json=data
+            )
+            
+            # レスポンスチェック
+            if response.status_code != 200:
+                logger.error(f"Gemini API エラー ({attempt+1}/{retry_count}): {response.status_code} {response.text}")
+                if attempt < retry_count - 1:
+                    time.sleep(2 ** attempt)  # 指数バックオフ
+                    continue
+                else:
+                    return None
+            
+            # レスポンスを解析
+            embedding_json = response.json()
+            
+            if "embedding" not in embedding_json or "values" not in embedding_json["embedding"]:
+                logger.error(f"Gemini API レスポンスに有効なデータがありません: {embedding_json}")
+                if attempt < retry_count - 1:
+                    time.sleep(2 ** attempt)
+                    continue
+                else:
+                    return None
+            
+            # エンベディング値を取得
+            embedding = np.array(embedding_json["embedding"]["values"], dtype=np.float32)
+            return embedding
+            
+        except Exception as e:
+            logger.error(f"Gemini マルチモーダルAPI処理中にエラーが発生しました ({attempt+1}/{retry_count}): {str(e)}")
+            if attempt < retry_count - 1:
+                time.sleep(2 ** attempt)
+            else:
+                return None
+    
+    return None
+
+def get_text_and_image_embedding(image_path, text_content, api_key=None, retry_count=3):
+    """
+    画像とテキストの両方を含むマルチモーダルエンベディングを取得する
+
+    Args:
+        image_path (str): 画像ファイルのパス
+        text_content (str): 関連するテキスト内容
+        api_key (str): Gemini APIキー。未指定の場合は環境変数から読み込む
+        retry_count (int): 失敗時の再試行回数
+        
+    Returns:
+        numpy.ndarray: マルチモーダルエンベディングベクトル。失敗時はNone
+    """
+    # APIキーの取得
+    api_key = api_key or os.getenv('GEMINI_API_KEY')
+    if not api_key:
+        logger.error("GEMINI_API_KEYが設定されていません。")
+        return None
+    
+    # 画像ファイルの読み込み
+    try:
+        with open(image_path, "rb") as image_file:
+            image_data = image_file.read()
+            image_base64 = base64.b64encode(image_data).decode('utf-8')
+    except Exception as e:
+        logger.error(f"画像ファイルの読み込みに失敗しました: {image_path} - {e}")
+        return None
+    
+    # APIエンドポイントとヘッダー
+    embedding_api_url = "https://generativelanguage.googleapis.com/v1beta/models/embedding-001:embedContent"
+    headers = {
+        "Content-Type": "application/json",
+        "x-goog-api-key": api_key
+    }
+    
+    # リクエストデータ（画像とテキストを含むマルチモーダルリクエスト）
+    data = {
+        "model": "embedding-001",
+        "content": {
+            "parts": [
+                {
+                    "inlineData": {
+                        "mimeType": "image/png" if image_path.lower().endswith(".png") else "image/jpeg",
+                        "data": image_base64
+                    }
+                },
+                {
+                    "text": text_content
+                }
+            ]
+        }
+    }
+    
+    # リトライループ
+    for attempt in range(retry_count):
+        try:
+            # APIリクエスト送信
+            response = requests.post(
+                embedding_api_url,
+                headers=headers,
+                json=data
+            )
+            
+            # レスポンスチェック
+            if response.status_code != 200:
+                logger.error(f"Gemini API エラー ({attempt+1}/{retry_count}): {response.status_code} {response.text}")
+                if attempt < retry_count - 1:
+                    time.sleep(2 ** attempt)  # 指数バックオフ
+                    continue
+                else:
+                    return None
+            
+            # レスポンスを解析
+            embedding_json = response.json()
+            
+            if "embedding" not in embedding_json or "values" not in embedding_json["embedding"]:
+                logger.error(f"Gemini API レスポンスに有効なデータがありません: {embedding_json}")
+                if attempt < retry_count - 1:
+                    time.sleep(2 ** attempt)
+                    continue
+                else:
+                    return None
+            
+            # エンベディング値を取得
+            embedding = np.array(embedding_json["embedding"]["values"], dtype=np.float32)
+            return embedding
+            
+        except Exception as e:
+            logger.error(f"Gemini マルチモーダルAPI処理中にエラーが発生しました ({attempt+1}/{retry_count}): {str(e)}")
+            if attempt < retry_count - 1:
+                time.sleep(2 ** attempt)
+            else:
+                return None
+    
+    return None
+
+def analyze_image(image_path, output_dir=None, model="gemini-1.5-pro-latest", api_key=None, 
+                 include_prompt=False, max_tokens=None, temperature=0.2, top_p=0.95, top_k=40,
+                 extract_json=True, save_embedding=False, multimodal_embedding=False):
+    """
+    画像をGemini APIで解析し、結果を保存する
+
+    Args:
+        image_path (str): 画像ファイルのパス
+        output_dir (str): 出力先ディレクトリ（指定がなければ画像と同じ場所）
+        model (str): 使用するGeminiモデル名
+        api_key (str): Gemini APIキー（指定がなければ環境変数から取得）
+        include_prompt (bool): プロンプトを結果に含めるかどうか
+        max_tokens (int): 生成する最大トークン数
+        temperature (float): 生成時の温度パラメータ
+        top_p (float): top-pサンプリングのパラメータ
+        top_k (int): top-kサンプリングのパラメータ
+        extract_json (bool): 解析結果からJSONを抽出するかどうか
+        save_embedding (bool): テキストエンベディングを保存するかどうか
+        multimodal_embedding (bool): マルチモーダルエンベディングを生成するかどうか
+        
+    Returns:
+        tuple: (解析結果, 成功フラグ, 出力先ディレクトリ, 抽出されたJSON)
+    """
+    # ...既存のコード...
+    
+    # 保存先の設定
+    if output_dir is None:
+        output_dir = os.path.dirname(image_path)
+    elif not os.path.exists(output_dir):
+        os.makedirs(output_dir, exist_ok=True)
+    
+    base_name = os.path.splitext(os.path.basename(image_path))[0]
+    output_json_path = os.path.join(output_dir, f"{base_name}_analysis.json")
+    output_txt_path = os.path.join(output_dir, f"{base_name}_analysis.txt")
+    
+    # ...既存のコード...
+    
+    if success:
+        # ...既存のコード...
+        
+        # テキストエンベディングの保存
+        if save_embedding:
+            from src.generate_embedding import process_file
+            process_file(output_json_path, embedding_dim=1536, use_api=True, api_key=api_key)
+        
+        # マルチモーダルエンベディングの生成と保存
+        if multimodal_embedding:
+            # 1. 画像のみのエンベディング
+            image_embedding = get_multimodal_embedding(image_path, api_key)
+            if image_embedding is not None:
+                image_embedding_path = os.path.join(output_dir, f"{base_name}_image_embedding.npy")
+                np.save(image_embedding_path, image_embedding)
+                logger.info(f"画像エンベディングを保存しました: {image_embedding_path}")
+            
+            # 2. 画像とテキストを組み合わせたエンベディング
+            if extracted_text:
+                text_and_image_embedding = get_text_and_image_embedding(image_path, extracted_text, api_key)
+                if text_and_image_embedding is not None:
+                    combined_embedding_path = os.path.join(output_dir, f"{base_name}_combined_embedding.npy")
+                    np.save(combined_embedding_path, text_and_image_embedding)
+                    logger.info(f"画像とテキストの組み合わせエンベディングを保存しました: {combined_embedding_path}")
+    
+    # ...既存のコード...
 
 def main():
-    """メイン関数"""
-    # ロギングの設定
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
-    logger = logging.getLogger(__name__)
-    
-    # コマンドライン引数の解析
-    parser = argparse.ArgumentParser(description='Gemini APIを使用した画像解析・エンベディング取得')
-    parser.add_argument('--input', '-i', required=True, help='入力画像ファイルまたはディレクトリのパス')
-    parser.add_argument('--output', '-o', required=True, help='出力ディレクトリのパス')
-    parser.add_argument('--text', '-t', help='画像に関連するテキスト（単一ファイル処理時）')
-    parser.add_argument('--text-file', '-tf', help='ファイル名とテキストのマッピングを含むJSONファイル（ディレクトリ処理時）')
-    parser.add_argument('--model', default='gemini-2.5-pro-exp-03-25', help='使用するGeminiモデル（デフォルト: gemini-2.5-pro-exp-03-25）')
-    parser.add_argument('--no-text', action='store_true', help='テキスト抽出を行わない')
-    parser.add_argument('--no-embedding', action='store_true', help='エンベディングを取得しない')
-    parser.add_argument('--multimodal-embedding', action='store_true', help='マルチモーダルエンベディングを使用する')
-    parser.add_argument('--api-key', help='Gemini APIキー（指定しない場合は環境変数から取得）')
-    parser.add_argument('--parallel', '-p', type=int, default=4, help='並列処理のワーカー数（デフォルト: 4）')
+    """コマンドライン実行のメイン処理"""
+    parser = argparse.ArgumentParser(description='Gemini APIを使用して画像を解析します')
+    parser.add_argument('--input', '-i', help='入力画像ファイルまたはディレクトリ', required=True)
+    parser.add_argument('--output', '-o', help='出力先ディレクトリ（指定なしなら入力と同じ場所）')
+    parser.add_argument('--model', '-m', default='gemini-1.5-pro-latest', 
+                        help='使用するGeminiモデル名（デフォルト: gemini-1.5-pro-latest）')
+    parser.add_argument('--api-key', help='Gemini APIキー（指定なしなら環境変数から取得）')
+    parser.add_argument('--include-prompt', action='store_true', help='プロンプトを結果に含める')
+    parser.add_argument('--max-tokens', type=int, help='生成する最大トークン数')
+    parser.add_argument('--temperature', type=float, default=0.2, help='生成時の温度パラメータ')
+    parser.add_argument('--top-p', type=float, default=0.95, help='top-pサンプリングのパラメータ')
+    parser.add_argument('--top-k', type=int, default=40, help='top-kサンプリングのパラメータ')
+    parser.add_argument('--no-json', action='store_true', help='JSONの抽出をスキップする')
+    parser.add_argument('--save-embedding', action='store_true', help='テキストエンベディングを保存する')
+    parser.add_argument('--multimodal-embedding', action='store_true', help='マルチモーダルエンベディングを生成する')
+    parser.add_argument('--recursive', '-r', action='store_true', help='ディレクトリを再帰的に処理する')
+    parser.add_argument('--direct-db', action='store_true', help='生成したエンベディングを直接DBに格納する')
+    parser.add_argument('--concurrency', '-c', type=int, default=2, 
+                        help='並列処理数（デフォルト: 2、APIレート制限に注意）')
     
     args = parser.parse_args()
     
-    try:
-        # 入力パスの確認
-        if not os.path.exists(args.input):
-            logger.error(f"入力パスが存在しません: {args.input}")
-            return 1
+    # ...既存のコード...
+    
+    # 処理関数を定義
+    def process_image(image_path, output_subdir=None):
+        # ...既存のコード...
         
-        # 関連テキストの読み込み（ディレクトリ処理時）
-        associated_texts = None
-        if args.text_file and os.path.isfile(args.text_file):
-            try:
-                with open(args.text_file, 'r', encoding='utf-8') as f:
-                    associated_texts = json.load(f)
-                logger.info(f"関連テキストを読み込みました: {len(associated_texts)}件")
-            except Exception as e:
-                logger.error(f"関連テキストファイルの読み込みに失敗しました: {str(e)}")
-                return 1
-        
-        # Gemini画像アナライザーの初期化
-        analyzer = GeminiImageAnalyzer(
+        return analyze_image(
+            image_path, 
+            output_dir=output_subdir,
+            model=args.model,
             api_key=args.api_key,
-            model_name=args.model,
-            extract_text=not args.no_text,
-            get_embedding=not args.no_embedding,
-            use_multimodal_embedding=args.multimodal_embedding
+            include_prompt=args.include_prompt,
+            max_tokens=args.max_tokens,
+            temperature=args.temperature,
+            top_p=args.top_p,
+            top_k=args.top_k,
+            extract_json=not args.no_json,
+            save_embedding=args.save_embedding,
+            multimodal_embedding=args.multimodal_embedding
         )
-        
-        # 単一ファイルまたはディレクトリを処理
-        if os.path.isfile(args.input):
-            # 単一ファイルの処理
-            logger.info(f"単一ファイルを処理: {args.input}")
-            result = analyzer.analyze_image(
-                image_path=args.input,
-                associated_text=args.text,
-                output_dir=args.output
-            )
-            
-            if result["success"]:
-                logger.info(f"ファイルの処理が完了しました: {args.input}")
-                if result["text_content"]:
-                    logger.info(f"テキスト抽出: {len(result['text_content'])}文字")
-                if result["embedding"] is not None:
-                    logger.info(f"エンベディング: {result['embedding'].shape}")
-                return 0
-            else:
-                logger.error(f"ファイルの処理に失敗しました: {args.input} - {result['error']}")
-                return 1
-                
-        elif os.path.isdir(args.input):
-            # ディレクトリの処理
-            logger.info(f"ディレクトリを処理: {args.input}")
-            results = analyzer.process_directory(
-                input_dir=args.input,
-                output_dir=args.output,
-                associated_texts=associated_texts,
-                max_workers=args.parallel
-            )
-            
-            # 結果のサマリーを出力
-            success_count = sum(1 for r in results if r["success"])
-            if success_count == 0:
-                logger.error("全てのファイルの処理に失敗しました")
-                return 1
-            elif success_count < len(results):
-                logger.warning(f"一部のファイルの処理に失敗しました: 成功={success_count}/{len(results)}")
-                return 0
-            else:
-                logger.info(f"全てのファイルの処理が完了しました: {len(results)}件")
-                return 0
-        
-    except Exception as e:
-        logger.error(f"実行中にエラーが発生しました: {str(e)}")
-        return 1
-
+    
+    # ...既存のコード...
 
 if __name__ == "__main__":
     exit(main()) 
