@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ====================================================================================
-# OCR + LLM + Markdown変換 + ベクターサーチ（Aurora） + マルチモーダル解析パイプライン実行スクリプト
+# OCR + LLM + Markdown変換 + ベクターサーチ + マルチモーダル解析パイプライン実行スクリプト
 # ====================================================================================
 #
 # このスクリプトは、PDFからの画像変換、OCR処理、Markdown変換、
@@ -14,7 +14,57 @@
 #   ./run_pipeline.sh path/to/document.pdf --use-llm --gemini --multimodal-embedding
 #
 # 作者: OCRプロジェクトチーム
+# バージョン: 1.1.0 (2024-04-08)
 # ====================================================================================
+
+# 終了時のクリーンアップ処理
+function cleanup {
+  echo "クリーンアップ処理を実行中..."
+  # 一時ファイルの削除などがあれば実行
+}
+
+# エラー発生時の処理
+function handle_error {
+  echo "エラーが発生しました: $1"
+  cleanup
+  exit 1
+}
+
+# ロギング機能
+function log {
+  local level="$1"
+  local message="$2"
+  local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+  
+  case "$level" in
+    "INFO")
+      echo "[INFO] $timestamp - $message"
+      ;;
+    "ERROR")
+      echo "[ERROR] $timestamp - $message" >&2
+      ;;
+    "WARNING")
+      echo "[WARNING] $timestamp - $message"
+      ;;
+    *)
+      echo "[$level] $timestamp - $message"
+      ;;
+  esac
+}
+
+# 必要なコマンドが存在するか確認
+function check_required_commands {
+  local commands=("python" "mkdir" "basename")
+  
+  for cmd in "${commands[@]}"; do
+    if ! command -v "$cmd" &> /dev/null; then
+      handle_error "$cmd コマンドが見つかりません。インストールしてください。"
+    fi
+  done
+}
+
+# スクリプトの初期チェック
+check_required_commands
 
 # スクリプトが存在するディレクトリを取得
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -33,6 +83,7 @@ MARKDOWN_DIR="$DATA_DIR/markdown"
 EMBEDDING_DIR="$DATA_DIR/embedding"
 CLAUDE_DIR="$DATA_DIR/claude"
 GEMINI_DIR="$DATA_DIR/gemini"
+SIMILARITY_DIR="$DATA_DIR/similarity_reports"
 
 # デフォルト設定
 DEFAULT_DPI=300
@@ -40,6 +91,8 @@ DEFAULT_FORMAT="png"
 DEFAULT_YEAR=2025
 DEFAULT_QUESTION_PREFIX="Q"
 DEFAULT_PARALLEL=4
+DEFAULT_MODEL_VERSION="3.7" # Claude API用のモデルバージョン
+DEFAULT_EMBEDDING_DIMENSION=1536 # エンベディングの次元数
 
 # デフォルト値の設定
 PDF_FILE="" # PDFファイルのパス
@@ -62,6 +115,11 @@ DIRECT_KATEX=false # 画像から直接KaTeX形式に変換するかどうか
 MULTIMODAL_EMBEDDING=false # マルチモーダルエンベディングを生成するかどうか
 NO_API=false # API呼び出しを使用せずダミーエンベディングを生成するかどうか
 SIMILARITY_COMPARE=false # エンベディング類似度比較を実行するかどうか
+NO_FK_CHECK=false # 外部キー制約チェックを無効にするかどうか
+TAG_EXTRACTION=false # 問題タグの自動抽出を実行するかどうか
+MODEL_VERSION=$DEFAULT_MODEL_VERSION # APIモデルのバージョン
+EMBEDDING_DIMENSION=$DEFAULT_EMBEDDING_DIMENSION # エンベディングの次元数
+DEBUG_MODE=false # デバッグモード（詳細なログ出力）
 
 # ヘルプ表示関数
 function show_help {
@@ -82,18 +140,23 @@ function show_help {
   echo "  --multimodal-embedding 画像とテキストを組み合わせたマルチモーダルエンベディングを生成"
   echo "  --no-api             API呼び出しを使用せずダミーエンベディングを生成"
   echo "  --similarity-compare エンベディング間の類似度比較を実行"
-  echo "  --year YEAR          対象年度を指定（デフォルト: 2025）"
-  echo "  --prefix PREFIX      問題IDのプレフィックスを指定（デフォルト: Q）"
-  echo "  --dpi DPI            画像変換時のDPI値を指定（デフォルト: 300）"
-  echo "  --format FORMAT      画像フォーマットを指定（png/jpeg、デフォルト: png）"
-  echo "  --parallel N         並列処理数を指定（デフォルト: 4）"
+  echo "  --no-fk-check        エンベディングインポート時に外部キー制約チェックを無効化"
+  echo "  --tag-extraction     問題のタグを自動抽出して保存"
+  echo "  --model-version VER  APIモデルのバージョンを指定（デフォルト: $DEFAULT_MODEL_VERSION）"
+  echo "  --embedding-dim DIM  エンベディングの次元数を指定（デフォルト: $DEFAULT_EMBEDDING_DIMENSION）"
+  echo "  --year YEAR          対象年度を指定（デフォルト: $DEFAULT_YEAR）"
+  echo "  --prefix PREFIX      問題IDのプレフィックスを指定（デフォルト: $DEFAULT_QUESTION_PREFIX）"
+  echo "  --dpi DPI            画像変換時のDPI値を指定（デフォルト: $DEFAULT_DPI）"
+  echo "  --format FORMAT      画像フォーマットを指定（png/jpeg、デフォルト: $DEFAULT_FORMAT）"
+  echo "  --parallel N         並列処理数を指定（デフォルト: $DEFAULT_PARALLEL）"
+  echo "  --debug              デバッグモードを有効化（詳細なログ出力）"
   echo "  -h, --help           このヘルプを表示"
   echo ""
   echo "例:"
   echo "  $0 data/pdf/sample.pdf --use-llm --year 2024 --gemini"
   echo "  $0 data/pdf/sample.pdf --direct-katex --year 2024"
   echo "  $0 data/pdf/sample.pdf --use-llm --gemini --multimodal-embedding"
-  echo "  $0 data/pdf/sample.pdf --use-llm --similarity-compare"
+  echo "  $0 data/pdf/sample.pdf --use-llm --similarity-compare --tag-extraction"
   echo ""
   exit 0
 }
@@ -109,8 +172,7 @@ shift
 
 # PDFファイルの存在確認
 if [ ! -f "$PDF_FILE" ]; then
-  echo "エラー: 指定されたPDFファイル '$PDF_FILE' が見つかりません。"
-  exit 1
+  handle_error "指定されたPDFファイル '$PDF_FILE' が見つかりません。"
 fi
 
 # オプション引数の解析
@@ -125,6 +187,7 @@ while [ $# -gt 0 ]; do
       EMBEDDING_DIR="$OUTPUT_DIR/embedding"
       CLAUDE_DIR="$OUTPUT_DIR/claude"
       GEMINI_DIR="$OUTPUT_DIR/gemini"
+      SIMILARITY_DIR="$OUTPUT_DIR/similarity_reports"
       shift 2
       ;;
     --skip-ocr)
@@ -182,6 +245,22 @@ while [ $# -gt 0 ]; do
       SIMILARITY_COMPARE=true
       shift
       ;;
+    --no-fk-check)
+      NO_FK_CHECK=true
+      shift
+      ;;
+    --tag-extraction)
+      TAG_EXTRACTION=true
+      shift
+      ;;
+    --model-version)
+      MODEL_VERSION="$2"
+      shift 2
+      ;;
+    --embedding-dim)
+      EMBEDDING_DIMENSION="$2"
+      shift 2
+      ;;
     --year)
       YEAR="$2"
       shift 2
@@ -202,77 +281,90 @@ while [ $# -gt 0 ]; do
       PARALLEL="$2"
       shift 2
       ;;
+    --debug)
+      DEBUG_MODE=true
+      shift
+      ;;
     *)
-      echo "エラー: 不明なオプション '$1'"
-      show_help
+      handle_error "不明なオプション '$1'"
       ;;
   esac
 done
 
+# デバッグモードの設定
+if [ "$DEBUG_MODE" = true ]; then
+  set -x  # コマンドトレースを有効化
+fi
+
 # 必要なディレクトリの作成
+log "INFO" "必要なディレクトリを作成中..."
 mkdir -p "$PDF_DIR" "$IMAGES_DIR" "$OCR_DIR" "$MARKDOWN_DIR" "$EMBEDDING_DIR"
-mkdir -p "$CLAUDE_DIR" "$GEMINI_DIR"
+mkdir -p "$CLAUDE_DIR" "$GEMINI_DIR" "$SIMILARITY_DIR"
 
 # PDFファイル名の取得（パスを除く）
 PDF_FILENAME=$(basename "$PDF_FILE")
 PDF_NAME="${PDF_FILENAME%.*}"
 
 # ステップ1: PDFを画像に変換
-echo "ステップ1: PDFをページごとに画像に変換中..."
-python "$SCRIPTS_DIR/pdf_to_images.py" "$PDF_FILE" --output_dir "$IMAGES_DIR/$PDF_NAME" --dpi "$DPI" --format "$FORMAT"
-echo "  -> 変換完了: $IMAGES_DIR/$PDF_NAME"
+log "INFO" "ステップ1: PDFをページごとに画像に変換中..."
+python "$SCRIPTS_DIR/pdf_to_images.py" "$PDF_FILE" --output_dir "$IMAGES_DIR/$PDF_NAME" --dpi "$DPI" --format "$FORMAT" || handle_error "PDF→画像変換に失敗しました"
+log "INFO" "  -> 変換完了: $IMAGES_DIR/$PDF_NAME"
 
 # ステップ2: OCR処理または直接KaTeX変換
 if [ "$SKIP_OCR" = false ]; then
-  echo "ステップ2: OCR処理中..."
+  log "INFO" "ステップ2: OCR処理中..."
   OCR_CMD="python $SCRIPTS_DIR/ocr_engine.py $IMAGES_DIR/$PDF_NAME $OCR_DIR/$PDF_NAME"
   
   if [ "$USE_LLM" = true ]; then
     OCR_CMD="$OCR_CMD --use-llm"
     if [ "$USE_CLAUDE" = true ]; then
-      OCR_CMD="$OCR_CMD --llm-provider claude"
+      OCR_CMD="$OCR_CMD --llm-provider claude --model-version $MODEL_VERSION"
     elif [ "$USE_GEMINI" = true ]; then
       OCR_CMD="$OCR_CMD --llm-provider gemini"
     fi
   fi
   
-  eval "$OCR_CMD"
-  echo "  -> OCR完了: $OCR_DIR/$PDF_NAME"
+  eval "$OCR_CMD" || handle_error "OCR処理に失敗しました"
+  log "INFO" "  -> OCR完了: $OCR_DIR/$PDF_NAME"
 fi
 
 # ステップ3: Markdown変換
 if [ "$SKIP_MARKDOWN" = false ]; then
-  echo "ステップ3: OCRテキストをMarkdownに変換中..."
+  log "INFO" "ステップ3: OCRテキストをMarkdownに変換中..."
   
   if [ "$DIRECT_KATEX" = true ]; then
     # 画像から直接KaTeX形式に変換する場合
+    mkdir -p "$MARKDOWN_DIR/$PDF_NAME"
     for img_file in "$IMAGES_DIR/$PDF_NAME"/*.$FORMAT; do
-      base_name=$(basename "$img_file" .$FORMAT)
-      python "$SCRIPTS_DIR/ocr_to_markdown.py" "$img_file" "$MARKDOWN_DIR/$PDF_NAME/${base_name}.md" --direct-image-to-katex
+      if [ -f "$img_file" ]; then
+        base_name=$(basename "$img_file" .$FORMAT)
+        log "INFO" "  -> 画像変換中: $base_name"
+        python "$SCRIPTS_DIR/ocr_to_markdown.py" "$img_file" "$MARKDOWN_DIR/$PDF_NAME/${base_name}.md" --direct-image-to-katex || handle_error "画像→KaTeX変換に失敗しました: $img_file"
+      fi
     done
   else
     # 通常のOCRテキストからMarkdownへの変換
-    python "$SCRIPTS_DIR/ocr_to_markdown.py" "$OCR_DIR/$PDF_NAME" "$MARKDOWN_DIR/$PDF_NAME" --image-base-path "../images/$PDF_NAME"
+    python "$SCRIPTS_DIR/ocr_to_markdown.py" "$OCR_DIR/$PDF_NAME" "$MARKDOWN_DIR/$PDF_NAME" --image-base-path "../images/$PDF_NAME" || handle_error "Markdown変換に失敗しました"
   fi
   
-  echo "  -> Markdown変換完了: $MARKDOWN_DIR/$PDF_NAME"
+  log "INFO" "  -> Markdown変換完了: $MARKDOWN_DIR/$PDF_NAME"
 fi
 
 # ステップ4: MarkdownをDBにインポート
 if [ "$SKIP_IMPORT" = false ]; then
-  echo "ステップ4: MarkdownをDBにインポート中..."
-  python "$SCRIPTS_DIR/markdown_importer.py" --input "$MARKDOWN_DIR/$PDF_NAME" --year "$YEAR" --prefix "$QUESTION_PREFIX"
-  echo "  -> DBインポート完了"
+  log "INFO" "ステップ4: MarkdownをDBにインポート中..."
+  python "$SCRIPTS_DIR/markdown_importer.py" "$MARKDOWN_DIR/$PDF_NAME" --year "$YEAR" --prefix "$QUESTION_PREFIX" || handle_error "DBインポートに失敗しました"
+  log "INFO" "  -> DBインポート完了"
 fi
 
 # ステップ5: 画像解析（マルチモーダルAPI）
 if [ "$SKIP_ANALYSIS" = false ]; then
-  echo "ステップ5: 画像解析（マルチモーダルAPI）中..."
+  log "INFO" "ステップ5: 画像解析（マルチモーダルAPI）中..."
   
   if [ "$USE_CLAUDE" = true ]; then
-    ANALYSIS_CMD="python $SCRIPTS_DIR/claude_image_analyzer.py --input $IMAGES_DIR/$PDF_NAME --output $CLAUDE_DIR/$PDF_NAME"
-    eval "$ANALYSIS_CMD"
-    echo "  -> Claude APIによる画像解析完了: $CLAUDE_DIR/$PDF_NAME"
+    ANALYSIS_CMD="python $SCRIPTS_DIR/claude_image_analyzer.py --input $IMAGES_DIR/$PDF_NAME --output $CLAUDE_DIR/$PDF_NAME --model-version $MODEL_VERSION"
+    eval "$ANALYSIS_CMD" || handle_error "Claude APIによる画像解析に失敗しました"
+    log "INFO" "  -> Claude APIによる画像解析完了: $CLAUDE_DIR/$PDF_NAME"
   elif [ "$USE_GEMINI" = true ]; then
     ANALYSIS_CMD="python $SCRIPTS_DIR/gemini_image_analyzer.py --input $IMAGES_DIR/$PDF_NAME --output $GEMINI_DIR/$PDF_NAME"
     
@@ -280,76 +372,119 @@ if [ "$SKIP_ANALYSIS" = false ]; then
       ANALYSIS_CMD="$ANALYSIS_CMD --multimodal-embedding"
     fi
     
-    eval "$ANALYSIS_CMD"
-    echo "  -> Gemini APIによる画像解析完了: $GEMINI_DIR/$PDF_NAME"
+    if [ "$TAG_EXTRACTION" = true ]; then
+      ANALYSIS_CMD="$ANALYSIS_CMD --extract-tags"
+    fi
+    
+    eval "$ANALYSIS_CMD" || handle_error "Gemini APIによる画像解析に失敗しました"
+    log "INFO" "  -> Gemini APIによる画像解析完了: $GEMINI_DIR/$PDF_NAME"
   fi
 fi
 
 # ステップ6: エンベディング生成
 if [ "$SKIP_EMBEDDING" = false ] && [ "$MULTIMODAL_EMBEDDING" = false ]; then
-  echo "ステップ6: エンベディング生成中..."
+  log "INFO" "ステップ6: エンベディング生成中..."
   
   if [ "$USE_CLAUDE" = true ]; then
-    EMBEDDING_CMD="python $SCRIPTS_DIR/generate_embedding.py --input $CLAUDE_DIR/$PDF_NAME --dimension 1536 --parallel $PARALLEL"
+    EMBEDDING_CMD="python $SCRIPTS_DIR/generate_embedding.py --input $CLAUDE_DIR/$PDF_NAME --dimension $EMBEDDING_DIMENSION --parallel $PARALLEL"
   else
-    EMBEDDING_CMD="python $SCRIPTS_DIR/generate_embedding.py --input $GEMINI_DIR/$PDF_NAME --dimension 1536 --parallel $PARALLEL"
+    EMBEDDING_CMD="python $SCRIPTS_DIR/generate_embedding.py --input $GEMINI_DIR/$PDF_NAME --dimension $EMBEDDING_DIMENSION --parallel $PARALLEL"
   fi
   
   if [ "$NO_API" = true ]; then
     EMBEDDING_CMD="$EMBEDDING_CMD --no-api"
   fi
   
-  eval "$EMBEDDING_CMD"
-  echo "  -> エンベディング生成完了"
+  eval "$EMBEDDING_CMD" || handle_error "エンベディング生成に失敗しました"
+  log "INFO" "  -> エンベディング生成完了"
 fi
 
 # ステップ7: エンベディングをDBにインポート
 if [ "$SKIP_EMBED_IMPORT" = false ]; then
-  echo "ステップ7: エンベディングをDBにインポート中..."
+  log "INFO" "ステップ7: エンベディングをDBにインポート中..."
   
   if [ "$USE_CLAUDE" = true ]; then
-    python "$SCRIPTS_DIR/embed_importer.py" --input "$CLAUDE_DIR/$PDF_NAME" --table embeddings
+    EMBED_IMPORT_CMD="python $SCRIPTS_DIR/embed_importer.py --input $CLAUDE_DIR/$PDF_NAME --table embeddings"
   else
-    python "$SCRIPTS_DIR/embed_importer.py" --input "$GEMINI_DIR/$PDF_NAME" --table embeddings
+    EMBED_IMPORT_CMD="python $SCRIPTS_DIR/embed_importer.py --input $GEMINI_DIR/$PDF_NAME --table embeddings"
   fi
   
-  echo "  -> エンベディングのDBインポート完了"
+  if [ "$NO_FK_CHECK" = true ]; then
+    EMBED_IMPORT_CMD="$EMBED_IMPORT_CMD --no-fk-check"
+  fi
+  
+  eval "$EMBED_IMPORT_CMD" || handle_error "エンベディングのDBインポートに失敗しました"
+  
+  log "INFO" "  -> エンベディングのDBインポート完了"
 fi
 
-# ステップ8: エンベディング類似度比較（オプション）
+# ステップ8: 問題タグの自動抽出と登録
+if [ "$TAG_EXTRACTION" = true ] && [ "$SKIP_ANALYSIS" = false ]; then
+  log "INFO" "ステップ8: 問題タグの自動抽出と登録中..."
+  
+  if [ "$USE_GEMINI" = true ]; then
+    # タグ登録コマンド
+    python "$SCRIPTS_DIR/tag_manager.py" --input "$GEMINI_DIR/$PDF_NAME" --operation import-tags || handle_error "タグ登録に失敗しました"
+    log "INFO" "  -> 問題タグの登録完了"
+  else
+    log "WARNING" "  -> タグ抽出はGemini APIでのみサポートされています"
+  fi
+fi
+
+# ステップ9: エンベディング類似度比較（オプション）
 if [ "$SIMILARITY_COMPARE" = true ]; then
-  echo "ステップ8: エンベディング類似度比較中..."
+  log "INFO" "ステップ9: エンベディング類似度比較中..."
   
   if [ "$USE_CLAUDE" = true ]; then
-    python "$SCRIPTS_DIR/compare_similarity.py" --input "$CLAUDE_DIR/$PDF_NAME" --output "$OUTPUT_DIR/similarity_reports/$PDF_NAME"
+    python "$SCRIPTS_DIR/compare_similarity.py" --input "$CLAUDE_DIR/$PDF_NAME" --output "$SIMILARITY_DIR/$PDF_NAME" || handle_error "類似度比較に失敗しました"
   else
-    python "$SCRIPTS_DIR/compare_similarity.py" --input "$GEMINI_DIR/$PDF_NAME" --output "$OUTPUT_DIR/similarity_reports/$PDF_NAME"
+    python "$SCRIPTS_DIR/compare_similarity.py" --input "$GEMINI_DIR/$PDF_NAME" --output "$SIMILARITY_DIR/$PDF_NAME" || handle_error "類似度比較に失敗しました"
   fi
   
-  echo "  -> 類似度比較レポート生成完了: $OUTPUT_DIR/similarity_reports/$PDF_NAME"
+  log "INFO" "  -> 類似度比較レポート生成完了: $SIMILARITY_DIR/$PDF_NAME"
 fi
 
-echo "パイプライン処理が完了しました！"
-echo "出力ディレクトリ: $OUTPUT_DIR"
-echo "処理結果:"
-echo "  - PDF → 画像: $IMAGES_DIR/$PDF_NAME"
-echo "  - OCRテキスト: $OCR_DIR/$PDF_NAME"
-echo "  - Markdown: $MARKDOWN_DIR/$PDF_NAME"
+# デバッグモードを無効化
+if [ "$DEBUG_MODE" = true ]; then
+  set +x  # コマンドトレースを無効化
+fi
+
+log "INFO" "パイプライン処理が完了しました！"
+log "INFO" "出力ディレクトリ: $OUTPUT_DIR"
+log "INFO" "処理結果:"
+log "INFO" "  - PDF → 画像: $IMAGES_DIR/$PDF_NAME"
+log "INFO" "  - OCRテキスト: $OCR_DIR/$PDF_NAME"
+log "INFO" "  - Markdown: $MARKDOWN_DIR/$PDF_NAME"
 
 if [ "$USE_CLAUDE" = true ]; then
-  echo "  - 解析結果: $CLAUDE_DIR/$PDF_NAME"
+  log "INFO" "  - 解析結果: $CLAUDE_DIR/$PDF_NAME"
 else
-  echo "  - 解析結果: $GEMINI_DIR/$PDF_NAME"
+  log "INFO" "  - 解析結果: $GEMINI_DIR/$PDF_NAME"
 fi
 
-echo "  - エンベディング: $EMBEDDING_DIR/$PDF_NAME"
-echo "  - データベース: questionsテーブルおよびembeddingsテーブル"
+log "INFO" "  - エンベディング: $EMBEDDING_DIR"
+
+if [ "$SIMILARITY_COMPARE" = true ]; then
+  log "INFO" "  - 類似度レポート: $SIMILARITY_DIR/$PDF_NAME"
+fi
+
+if [ "$TAG_EXTRACTION" = true ]; then
+  log "INFO" "  - 問題タグ: question_tagsテーブル"
+fi
+
+log "INFO" "  - データベース: questionsテーブルおよびembeddingsテーブル"
 echo ""
 echo "以下のSQLでベクターサーチを実行できます:"
 echo "SELECT q.question_id, q.year, q.content,"
-echo "       e.embedding <-> to_query_vector(:input_vector) AS distance"
+echo "       1 - (e.embedding <=> :query_vector) AS similarity"
 echo "  FROM questions q"
 echo "  JOIN embeddings e ON q.question_id = e.question_id"
-echo " ORDER BY distance ASC"
+echo " ORDER BY similarity DESC"
 echo " LIMIT 10;"
-echo "========================================================" 
+echo "========================================================"
+
+# クリーンアップ処理を実行
+cleanup
+
+# 終了時のクリーンアップ処理を実行
+cleanup 
