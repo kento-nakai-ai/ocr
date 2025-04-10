@@ -1,261 +1,209 @@
-<<<<<<< HEAD
-# 資格試験対策システム API
 
-## 概要
+# OCR + LLM + 資格試験対策統合システム
 
-このプロジェクトは、資格試験の頻出問題や苦手問題を提供し、ユーザーの解答を記録・分析するためのREST APIを実装しています。AWS Cognitoを使用してユーザー認証を行い、JSON Web Token (JWT) によるセキュアなアクセス制御を提供します。
+## 目次
 
-## 機能一覧
+1. [プロジェクト概要](#プロジェクト概要)
+2. [システム構成](#システム構成)
+3. [OCRパイプライン詳細](#ocrパイプライン詳細)
+4. [資格試験対策API詳細](#資格試験対策api詳細)
+5. [データベース構造](#データベース構造)
+6. [タグシステム](#タグシステム)
+7. [インストールと環境構築](#インストールと環境構築)
+8. [使用例](#使用例)
+9. [分析ツール](#分析ツール)
+10. [ディレクトリ構造](#ディレクトリ構造)
+11. [トラブルシューティング](#トラブルシューティング)
+12. [参考リンク](#参考リンク)
+
+## プロジェクト概要
+
+このプロジェクトは、PDF形式の問題データを処理し、資格試験対策システムを構築するための統合ソリューションです。OCR処理から始まり、マルチモーダル解析、ベクターサーチ、そしてRESTful APIによるユーザーインターフェースまでを一貫して提供します。
+
+主な特徴：
+- 高精度OCR（ローカルTesseractまたはLLMベース）
+- 数式・図表を含むMarkdown/KaTeX形式への変換
+- マルチモーダルAI（Gemini/Claude）による画像解析
+- ベクターサーチによる類似問題検索
+- FastAPIベースのREST APIインターフェース
+- 柔軟なタグシステムによる問題管理
+
+## システム構成
+
+```mermaid
+flowchart TD
+    subgraph "データ処理パイプライン"
+        A[PDF入力] --> B[PDF→画像変換]
+        B --> C[OCR処理]
+        C --> D[Markdown変換]
+        D --> E[データベース登録]
+        B --> F[画像解析]
+        F --> G[エンベディング生成]
+        G --> E
+    end
+    
+    subgraph "API層"
+        E --> H[頻出問題API]
+        E --> I[ユーザー回答API]
+        E --> J[成績統計API]
+        H --> K[クライアントアプリ]
+        I --> K
+        J --> K
+    end
+    
+    subgraph "検索機能"
+        E --> L[ベクターサーチ]
+        L --> M[類似問題表示]
+        M --> K
+    end
+```
+
+## OCRパイプライン詳細
+
+OCRパイプラインはPDF問題データを処理し、構造化された形式で保存します。
+
+### 処理フロー
+
+1. **PDF処理**: PDFページを高品質画像に変換
+   ```bash
+   python src/pdf_to_images.py --input input.pdf --output data/images/
+   ```
+
+2. **OCR処理**: 3つの方式から選択
+   - Tesseract（ローカル）
+   - LLMベース（Gemini/Claude）
+   - 画像から直接KaTeX変換
+   ```bash
+   python src/ocr_engine.py --input data/images/page_001.png --output data/ocr/ --use-llm --gemini
+   ```
+
+3. **Markdown変換**: OCRテキストを数式付きMarkdownに変換
+   ```bash
+   python src/ocr_to_markdown.py --input data/ocr/page_001.txt --output data/markdown/page_001.md
+   ```
+
+4. **データベース登録**: MarkdownをPostgreSQLに格納
+   ```bash
+   python src/markdown_importer.py --input data/markdown/page_001.md --year 2024 --db-connection "postgresql://user:pass@localhost/db"
+   ```
+
+5. **画像解析**: マルチモーダルAIによる構造解析
+   ```bash
+   python src/gemini_image_analyzer.py --input data/images/page_001.png --output data/gemini/
+   ```
+
+6. **エンベディング生成**: テキストまたはマルチモーダルエンベディング
+   ```bash
+   python src/generate_embedding.py --input data/gemini/page_001_analysis.json --output data/embedding/
+   ```
+
+7. **エンベディングをDBに格納**: ベクターサーチ用
+   ```bash
+   python src/embed_importer.py --input data/embedding/page_001_embedding.npy --question-id R04001
+   ```
+
+### 主な機能
+
+- **LLMベースOCR**: 高精度な日本語OCR
+- **KaTeX数式変換**: 数式を美しく表示
+- **構造化抽出**: 問題文、選択肢、解説など自動認識
+- **回路図・表認識**: 図形的要素も検出・構造化
+- **マルチモーダルエンベディング**: 画像とテキストの複合的な埋め込み
+
+## 資格試験対策API詳細
+
+FastAPIベースのREST APIでユーザーインターフェースを提供します。
+
+### 主な機能
 
 - **頻出問題API**: ユーザーの試験種別に合わせた頻出問題を取得
-- **ユーザー回答API**: ユーザーの回答を記録し、合格率スコアを計算
-- **成績統計API**: ユーザーの学習進捗や成績の履歴を取得
-- **頻出問題登録API**: 週次バッチ処理用の頻出問題一括登録機能（管理者向け）
+- **ユーザー回答API**: 回答記録と合格率スコア計算
+- **成績統計API**: 学習進捗や成績履歴の取得
+- **頻出問題登録API**: 一括登録機能（管理者向け）
 
-## 技術スタック
+### API仕様
 
-- **フレームワーク**: FastAPI
-- **データベース**: SQLAlchemy (ORM)
-- **認証**: AWS Cognito + JWT
-- **依存性管理**: Requirements.txt
-- **コードスタイル**: PEP 8準拠
-
-## インストールと実行方法
-
-### 環境構築
-
-1. Pythonのインストール (3.9以上)
-```bash
-# バージョン確認
-python --version
-```
-
-2. 仮想環境の作成と有効化
-```bash
-# 仮想環境の作成
-python -m venv venv
-
-# 有効化 (Windows)
-venv\Scripts\activate
-
-# 有効化 (Mac/Linux)
-source venv/bin/activate
-```
-
-3. 依存パッケージのインストール
-```bash
-pip install -r requirements.txt
-```
-
-### 環境変数の設定
-
-`.env` ファイルを作成し、以下の環境変数を設定してください。
-
-```
-# AWS Cognito設定
-AWS_REGION=ap-northeast-1
-COGNITO_USER_POOL_ID=your-user-pool-id
-COGNITO_APP_CLIENT_ID=your-app-client-id
-
-# データベース設定
-DATABASE_URL=sqlite:///./exam_api.db
-# 本番環境では PostgreSQL 等を使用
-# DATABASE_URL=postgresql://user:password@localhost/dbname
-
-# デバッグ設定
-SQL_DEBUG=0
-```
-
-### アプリケーションの起動
-
-```bash
-# 開発用サーバーの起動
-uvicorn app.main:app --reload
-
-# 本番用サーバーの起動
-uvicorn app.main:app --host 0.0.0.0 --port 8000
-```
-
-## API ドキュメント
-
-API ドキュメントは自動生成されます。サーバー起動後、以下のURLでアクセスできます。
-
+サーバー起動後、以下のURLでAPIドキュメントにアクセスできます：
 - Swagger UI: http://localhost:8000/docs
 - ReDoc: http://localhost:8000/redoc
 
-## テスト
-
-テストの実行方法:
-
-```bash
-pytest
-```
-
-## ディレクトリ構造
+### アプリケーション構造
 
 ```
-exam_api/
-├── app/
-│   ├── __init__.py
-│   ├── main.py
-│   ├── models/
-│   │   ├── __init__.py
-│   │   ├── database.py
-│   │   ├── question.py
-│   │   ├── frequent_question.py
-│   │   ├── user_answer.py
-│   │   └── user_stat.py
-│   ├── routes/
-│   │   ├── __init__.py
-│   │   ├── frequent_questions.py
-│   │   └── user_answers.py
-│   ├── services/
-│   │   ├── __init__.py
-│   │   ├── frequent_question_service.py
-│   │   └── user_answer_service.py
-│   └── utils/
-│       ├── __init__.py
-│       └── auth.py
-├── tests/
-│   ├── __init__.py
-│   ├── test_frequent_questions.py
-│   └── test_user_answers.py
-├── .env
-├── .gitignore
-├── README.md
-└── requirements.txt
+app/
+├── main.py                   # アプリケーションエントリポイント
+├── models/                   # データモデル
+│   ├── database.py           # データベース接続設定
+│   ├── question.py           # 問題モデル
+│   ├── frequent_question.py  # 頻出問題モデル
+│   ├── user_answer.py        # ユーザー回答モデル
+│   └── user_stat.py          # ユーザー統計モデル
+├── routes/                   # APIルート
+│   ├── frequent_questions.py # 頻出問題API
+│   └── user_answers.py       # ユーザー回答API
+├── services/                 # ビジネスロジック
+│   ├── frequent_question_service.py # 頻出問題サービス
+│   └── user_answer_service.py       # ユーザー回答サービス
+└── utils/                    # ユーティリティ
+    └── auth.py               # 認証ユーティリティ
 ```
 
-## ライセンス
+## データベース構造
 
-このプロジェクトは非公開です。無断での使用、配布、改変は禁止されています。 
-=======
-# OCR + LLM(LLM-based OCR) + Markdown変換 + ベクターサーチ（Aurora） + マルチモーダル解析パイプライン
+PostgreSQL（またはAurora）を使用し、pgvector拡張でベクターサーチを実現します。
 
-このプロジェクトでは、PDF形式の問題データを中心に、以下のステップを経て学習データを構築・蓄積します。
+### 主要テーブル
 
-1. **PDF取得 → PDFページを画像化**  
-2. **OCR（ローカル or LLMベース）でテキスト抽出** または **画像から直接KaTeX形式に変換**  
-3. **Markdown整形（KaTeX数式や画像タグ対応）**  
-4. **PostgreSQL（またはAurora）へMarkdownデータをインポート**  
-5. **画像をGemini/ClaudeなどのマルチモーダルAPIへ渡し、解析結果を取得**  
-   - **日本語試験問題を抽出し、JSON形式で構造化**
-   - **回路図や表などの図形的要素も認識・構造化**
-6. **解析結果から埋め込み（Embedding）ベクトルを生成**
-   - **テキストのみのエンベディング**
-   - **マルチモーダルエンベディング（画像とテキストの組み合わせ）**
-7. **Embedding結果をDBに格納（ベクターサーチに対応）**  
-8. **得られたメタ情報を追加でDBに格納またはJSON化**  
-
-この一連のパイプラインにより、類似問題検索などの機能（マルチモーダルベースのベクターサーチ）を実現します。
-
-## 機能概要
-
-1. **PDFファイルのページごとの画像変換**  
-   - `pdf_to_images.py`などでPopplerを用いてPDFから画像（PNG/JPEG）を生成
-2. **OCR処理または直接KaTeX変換**  
-   - **ローカルOCR（Tesseract）**  
-   - **LLMベースOCR（Gemini 2.5 Pro, Claude 3.7 Sonnet, GPT-4など）**
-   - **画像から直接KaTeX形式への変換**（`ocr_to_markdown.py`の`--direct-image-to-katex`オプション）
-3. **Markdown変換（ocr_to_markdown.py）**  
-   - テキストをKaTeX数式や適切な画像タグに整形
-4. **PostgreSQL/Auroraにインポート（markdown_importer.py）**  
-   - `questions`テーブルなどにMarkdown形式の本文や年度、問題IDなどを格納
-5. **マルチモーダルAPI（Claude/Gemini等）で画像解析**  
-   - 画像をAPIに送信→テキスト/解析結果（JSON）を取得
-   - `claude_image_analyzer.py`/`gemini_image_analyzer.py`で処理
-   - **日本語試験問題の構造化抽出**：
-     - 問題番号、問題文、選択肢、解説、正解などを自動認識
-     - 回路図や表などの図形的要素も検出・構造化
-     - 以下のようなJSON形式で出力：
-     ```json
-     {
-       "problems": [
-         {
-           "id": 1,
-           "question": "問題文...$Q = R I^2 t$...続く問題文",
-           "has_circuit_diagram": true, 
-           "circuit_description": "コンデンサとトランジスタを含む回路",
-           "has_table": false,
-           "choices": [
-             {
-               "number": 1,
-               "text": "選択肢1..."
-             },
-             {
-               "number": 2,
-               "text": "選択肢2..."
-             },
-             {
-               "number": 3,
-               "text": "選択肢3..."
-             },
-             {
-               "number": 4,
-               "text": "選択肢4..."
-             }
-           ],
-           "explanation": "解説文...$M = -e_2 \\frac{\\Delta t}{\\Delta i_1}$...続く解説文",
-           "correct_answer": 3
-         }
-       ]
-     }
-     ```
-6. **埋め込みベクトル生成（generate_embedding.py）**  
-   - 解析結果JSONからテキストのエンベディングを生成
-   - **マルチモーダルエンベディング生成**（画像とテキストを組み合わせた高度なエンベディング）
-   - ベクトルをnumpy形式で保存
-   - 実際のGemini APIを使用した正確なエンベディング生成（`--no-api`オプションでダミーエンベディングにフォールバック可能）
-7. **Embedding結果をDBに格納（embed_importer.py）**  
-   - Aurora PostgreSQLの場合、[pgvector拡張](https://github.com/pgvector/pgvector)などを利用可能  
-   - 類似度ベースの検索（ベクターサーチ）に活用
-8. **追加メタ情報の管理**  
-   - Gemini/Claude等から返却されるJSON形式の解析結果をDBに格納するか、別途JSONで保持するかを選択  
-   - 必要に応じて`metadata`テーブルを追加し、類似問題のIDやスコアなどを管理
-
-## データベース（PostgreSQL/Aurora）
-
-このプロジェクトではPostgreSQLデータベースを使用して、問題データとエンベディングベクトルを格納します。データベース関連の詳細な情報は[db/README.md](db/README.md)を参照してください。
-
-### データベース構造
-
-主要テーブルの構造を簡単に示します：
-
-```
-questions（問題テーブル）
-- id: 自動生成される整数型主キー
-- question_id: 問題ID（例：R04001）
-- year: 問題の年度
-- content: 問題の内容（Markdown形式）
-- created_at: 作成日時
-- updated_at: 更新日時
-
-embeddings（エンベディングテーブル）
-- id: 自動生成される整数型主キー
-- question_id: 関連する問題ID（questionsテーブルへの外部キー）
-- embedding_type: エンベディングのタイプ（例：text）
-- embedding: 768次元のエンベディングベクトル
-- metadata: エンベディングに関する追加情報（JSONB）
-- created_at: 作成日時
+**questionsテーブル**:
+```sql
+CREATE TABLE questions (
+  id SERIAL PRIMARY KEY,
+  question_id VARCHAR(50) UNIQUE NOT NULL,
+  year INTEGER NOT NULL,
+  content TEXT NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 ```
 
-### データベースのバックアップと共有
-
-チーム内でデータベースの状態を共有するには、以下のコマンドでダンプファイルを作成できます：
-
-```bash
-pg_dump -U <username> -d questions_db -f db/backups/questions_db_backup.sql
+**embeddingsテーブル**:
+```sql
+CREATE TABLE embeddings (
+  id SERIAL PRIMARY KEY,
+  question_id VARCHAR(50) REFERENCES questions(question_id),
+  embedding_type VARCHAR(50) NOT NULL,
+  embedding VECTOR(768), -- 次元数は使用するモデルによる
+  metadata JSONB,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 ```
 
-ダンプからデータベースを復元するには：
-
-```bash
-psql -U <username> -d questions_db -f db/backups/questions_db_backup.sql
+**frequent_questionsテーブル**:
+```sql
+CREATE TABLE frequent_questions (
+  id SERIAL PRIMARY KEY,
+  question_id VARCHAR(50) REFERENCES questions(question_id),
+  exam_type VARCHAR(50) NOT NULL,
+  frequency_score FLOAT NOT NULL,
+  last_appearance_year INTEGER,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 ```
 
-### ベクトル検索（類似問題検索）
+**user_answersテーブル**:
+```sql
+CREATE TABLE user_answers (
+  id SERIAL PRIMARY KEY,
+  user_id VARCHAR(100) NOT NULL,
+  question_id VARCHAR(50) REFERENCES questions(question_id),
+  answer TEXT NOT NULL,
+  is_correct BOOLEAN NOT NULL,
+  answer_time INTEGER, -- 回答時間（秒）
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+```
 
-pgvector拡張を使用して、類似問題の検索ができます。例えば以下のようなSQLクエリで実現できます：
+### ベクトル検索例
 
 ```sql
 SELECT q2.question_id, q2.content, 
@@ -269,36 +217,59 @@ ORDER BY similarity DESC
 LIMIT 5;
 ```
 
-## 前提条件
+## タグシステム
 
-### システム要件
-- Python 3.8以上
-- Poppler（PDF→画像変換用）
-- PostgreSQL または Amazon Aurora (PostgreSQL互換)
-- （必要に応じて）Tesseract OCR
-  - 日本語モデル（`jpn.traineddata`）
+問題に対して複数の属性（タグ）を柔軟に付与・管理するシステムです。
 
-### LLMベースOCR・画像解析（選択的に使用）
-- Gemini 2.5 Pro API（Googleの最新マルチモーダルモデル）
-- Claude 3.7 Sonnet API（Anthropic）
-- OpenAI API（GPT-4等）
+### タグ定義テーブル
 
-### Pythonパッケージ例
-
-```bash
-pip install pdf2image psycopg2-binary python-dotenv anthropic PyPDF2 google-generativeai numpy
-# LLM使用例:
-# pip install openai  # GPT-4等
-# pip install google-cloud-aiplatform  # 例: Vertex AI使用時など
+```sql
+CREATE TABLE tag_definitions (
+  id SERIAL PRIMARY KEY,
+  tag_key VARCHAR(50) UNIQUE NOT NULL,
+  tag_type VARCHAR(20) NOT NULL, -- Flag, Categorical, Array, Enum, Text
+  description TEXT,
+  possible_values JSONB,
+  remarks TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 ```
 
-## 仮想環境のセットアップ
+### 問題タグテーブル
 
-プロジェクトの依存関係をクリーンに管理するため、仮想環境の使用を強く推奨します。以下の手順でセットアップしてください。
+```sql
+CREATE TABLE question_tags (
+  id SERIAL PRIMARY KEY,
+  question_id VARCHAR(50) REFERENCES questions(question_id),
+  tag_key VARCHAR(50) REFERENCES tag_definitions(tag_key),
+  tag_value TEXT NOT NULL,
+  ai_inference VARCHAR(20), -- manual, by_AI, by_expert
+  remarks TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+```
 
-### 仮想環境の作成
+### 事前定義タグ例
 
-#### macOS / Linux:
+- **is_mandatory**: 必須問題かどうか
+- **difficulty**: 問題の難易度（LOW/MID/HIGH）
+- **problem_type**: 問題タイプ（計算/暗記/など）
+- **category**: 問題カテゴリ（法規/安全管理/設備/など）
+- **year_list**: 出題された年度のリスト
+- **exam_type**: 試験種別（1級電気/1級管/など）
+
+## インストールと環境構築
+
+### 前提条件
+
+- Python 3.8以上
+- Poppler（PDF→画像変換用）
+- PostgreSQL または Amazon Aurora
+- （必要に応じて）Tesseract OCR + 日本語モデル
+
+### 仮想環境のセットアップ
 
 ```bash
 # プロジェクトディレクトリに移動
@@ -307,66 +278,18 @@ cd /path/to/ocr-project
 # 仮想環境を作成
 python -m venv venv
 
-# 仮想環境をアクティブ化
+# 仮想環境をアクティブ化（macOS/Linux）
 source venv/bin/activate
-```
-
-#### Windows:
-
-```bash
-# プロジェクトディレクトリに移動
-cd C:\path\to\ocr-project
-
-# 仮想環境を作成
-python -m venv venv
-
-# 仮想環境をアクティブ化
-venv\Scripts\activate
-```
-
-### パッケージのインストール
-
-仮想環境をアクティブ化した状態で以下のコマンドを実行します：
-
-```bash
-# pipを最新バージョンにアップグレード（推奨）
-pip install --upgrade pip
+# または Windows
+# venv\Scripts\activate
 
 # 必要なパッケージをインストール
 pip install -r requirements.txt
 ```
 
-### 仮想環境の終了
+### 環境変数の設定
 
-作業が終了したら、以下のコマンドで仮想環境を終了できます：
-
-```bash
-deactivate
-```
-
-### 仮想環境の再アクティブ化
-
-次回作業を行う際は、仮想環境を再度アクティブ化します：
-
-#### macOS / Linux:
-```bash
-source venv/bin/activate
-```
-
-#### Windows:
-```bash
-venv\Scripts\activate
-```
-
-### 注意点
-
-- ターミナル/コマンドプロンプトのプロンプトが `(venv)` で始まっていれば、仮想環境がアクティブな状態です
-- プロジェクト関連のコマンドはすべて仮想環境がアクティブな状態で実行してください
-- `requirements.txt` に変更があった場合は、再度 `pip install -r requirements.txt` を実行して依存関係を更新してください
-
-### 環境変数
-
-`.env`ファイルをプロジェクトルートに作成し、以下の内容を設定してください（例）:
+`.env`ファイルをプロジェクトルートに作成：
 
 ```
 # データベース接続設定
@@ -376,116 +299,39 @@ DB_NAME=questions_db
 DB_USER=postgres
 DB_PASSWORD=your_password
 
-# Claude API（オプション）
+# API設定（必要なものを設定）
 CLAUDE_API_KEY=your_claude_api_key
-
-# Gemini API（オプション）
 GEMINI_API_KEY=your_gemini_api_key
-
-# OpenAI API
 OPENAI_API_KEY=your_openai_api_key
+
+# AWS Cognito設定（API認証用）
+AWS_REGION=ap-northeast-1
+COGNITO_USER_POOL_ID=your-user-pool-id
+COGNITO_APP_CLIENT_ID=your-app-client-id
 ```
 
-## ディレクトリ構造
-
-```
-.
-├── README.md                     # このファイル
-├── SETUP.md                      # セットアップガイド
-├── run_pipeline.sh               # ワークフロー実行スクリプト
-├── extract_sample.sh             # サンプルページ抽出スクリプト
-├── requirements.txt              # 必要なPythonパッケージ一覧
-├── .env                          # 環境変数設定ファイル
-├── .env.sample                   # 環境変数設定サンプル
-├── src/                          # 各種Pythonスクリプト
-│   ├── pdf_to_images.py               # [1] PDF→画像変換
-│   ├── ocr_engine.py                  # [2] OCR処理 (Tesseract/LLM)
-│   ├── ocr_to_markdown.py             # [3] テキスト→Markdown変換／画像→KaTeX変換
-│   ├── markdown_importer.py           # [4] Markdown→DBインポート
-│   ├── claude_image_analyzer.py       # [5a] Claudeを使った画像解析
-│   ├── gemini_image_analyzer.py       # [5b] Geminiを使った画像解析（マルチモーダルエンベディング対応）
-│   ├── generate_embedding.py          # [6] 解析結果からエンベディング生成
-│   ├── embed_importer.py              # [7] Embedding情報をDB格納
-│   ├── pdf2md_claude.py               # Claude 3.7 Sonnetを使ったPDF→Markdown変換
-│   ├── pdf2md_gemini.py               # Gemini 2.5 Proを使ったPDF→Markdown変換
-│   ├── extract_sample_pages.py        # PDFからサンプルページを抽出するスクリプト
-│   ├── embedding_analyzer.py          # エンベディング分析ツール
-│   ├── compare_samples.py             # 類似/非類似問題の比較ツール
-│   ├── compare_similarity.py          # 類似度比較ツール
-│   ├── db_utils.py                    # データベース操作ユーティリティ
-│   ├── README.md                      # srcディレクトリのREADME
-│   ├── input/                         # 入力ファイル保存ディレクトリ
-│   └── output/                        # 出力ファイル保存ディレクトリ
-└── data/                         # データファイル（自動生成）
-    ├── pdf/                      # 元のPDFファイル
-    ├── images/                   # 画像化したファイル
-    ├── ocr/                      # OCRテキスト
-    ├── markdown/                 # 変換されたMarkdown
-    ├── embedding/                # 画像・テキスト埋め込み（ベクトル）
-    ├── claude/                   # Claude APIの出力結果
-    ├── gemini/                   # Gemini APIの出力結果
-    └── .gitkeep                  # 空ディレクトリをバージョン管理するためのファイル
-```
-
-## パイプラインの流れ
-
-1. **[1] PDFを取得 → PDFページを画像化**  
-   - `pdf_to_images.py`でPopplerを呼び出し、ページ単位に画像を生成
-2. **[2] OCR処理 または 画像からの直接KaTeX変換**  
-   - `ocr_engine.py`を介してTesseractかLLMを選択  
-   - `--use-llm` オプションなどを指定してGemini/ClaudeのAPIを叩く
-   - または `ocr_to_markdown.py` の `--direct-image-to-katex` オプションで画像から直接KaTeX形式に変換
-3. **[3] OCRテキストをMarkdownへ変換**  
-   - `ocr_to_markdown.py` でKaTeX数式や画像タグを整形
-4. **[4] MarkdownをPostgreSQL/Auroraへインポート**  
-   - `markdown_importer.py` で `questions` テーブルにINSERT  
-   - 質問文、年度、問題IDなどを登録
-5. **[5] 画像解析（マルチモーダルAPI）**  
-   - `claude_image_analyzer.py`または`gemini_image_analyzer.py`で画像をAPIへ送信  
-   - 解析結果をJSON形式で保存
-   - `--multimodal-embedding`オプションを指定することでマルチモーダルエンベディングも生成
-   - **日本語試験問題の構造化抽出**：
-     - 問題番号、問題文、選択肢、解説、正解などを自動認識
-     - 回路図や表なども検出して構造化
-6. **[6] エンベディング生成**  
-   - `generate_embedding.py`で解析結果のテキストからエンベディングベクトルを生成  
-   - Gemini APIを使用した実際のエンベディング取得  
-   - またはマルチモーダルエンベディングを使用（`gemini_image_analyzer.py`から直接生成）
-7. **[7] エンベディングをDBに格納**  
-   - `embed_importer.py`でPostgreSQLなどにベクトルを保存
-8. **[8] メタデータ管理**  
-   - 必要に応じて追加のメタデータをDBに格納
-
-## 主な機能の詳細
-
-### 画像から直接KaTeX変換
-
-OCRテキストを経由せず、画像から直接KaTeX形式の数式を含むMarkdownを生成できます。
+### データベースセットアップ
 
 ```bash
-python src/ocr_to_markdown.py input_image.png output.md --direct-image-to-katex
+# データベース作成
+createdb questions_db
+
+# pgvector拡張のインストール
+psql -d questions_db -c "CREATE EXTENSION IF NOT EXISTS vector;"
+
+# スキーマ作成
+psql -d questions_db -f db/schema.sql
+psql -d questions_db -f db/tags_schema.sql
 ```
 
-### マルチモーダルエンベディング生成
-
-テキストと画像の両方を考慮した高度なエンベディングを生成できます。回路図や図表を含む問題に特に効果的です。
+### APIサーバーの起動
 
 ```bash
-python src/gemini_image_analyzer.py --input image.png --output output_dir --multimodal-embedding
-```
+# 開発用サーバー
+uvicorn app.main:app --reload
 
-### 実APIベースのエンベディング生成
-
-Gemini APIを使用して実際のエンベディングを生成します。より高精度な類似検索が可能になります。
-
-```bash
-python src/generate_embedding.py --input analysis_results.json --api-key your_api_key
-```
-
-API呼び出しを避けたい場合は、ダミーエンベディングにフォールバックすることも可能です：
-
-```bash
-python src/generate_embedding.py --input analysis_results.json --no-api
+# 本番用サーバー
+uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
 ## 使用例
@@ -493,19 +339,17 @@ python src/generate_embedding.py --input analysis_results.json --no-api
 ### 基本的なパイプライン実行
 
 ```bash
-./run_pipeline.sh data/pdf/sample.pdf --use-llm --year 2024 --gemini
-```
+# 基本実行（Tesseract OCR使用）
+./run_pipeline.sh data/pdf/document.pdf --year 2024
 
-### 画像から直接KaTeX変換を使用
+# LLMベースOCR使用（Gemini）
+./run_pipeline.sh data/pdf/document.pdf --use-llm --gemini --year 2024
 
-```bash
-./run_pipeline.sh data/pdf/sample.pdf --direct-katex --year 2024
-```
+# 画像から直接KaTeX変換
+./run_pipeline.sh data/pdf/document.pdf --direct-katex --year 2024
 
-### マルチモーダルエンベディングを生成
-
-```bash
-./run_pipeline.sh data/pdf/sample.pdf --use-llm --gemini --multimodal-embedding
+# マルチモーダルエンベディング使用
+./run_pipeline.sh data/pdf/document.pdf --use-llm --gemini --multimodal-embedding
 ```
 
 ### サンプルページ抽出と分析
@@ -514,13 +358,34 @@ python src/generate_embedding.py --input analysis_results.json --no-api
 ./extract_sample.sh data/pdf/large_document.pdf --use-llm --claude --pages 10
 ```
 
-## エンベディング分析ツール
+### タグマネージャーの使用例
 
-エンベディングの距離分析と類似/非類似問題の比較を行うためのツールが提供されています。
+```python
+from tag_manager import TagManager
+
+# TagManagerの初期化
+with TagManager(db_config) as tag_manager:
+    # 問題にタグを追加
+    tag_manager.add_tag_to_question(
+        question_id="R04001",
+        tag_key="difficulty",
+        tag_value="HIGH",
+        ai_inference="by_expert"
+    )
+    
+    # 難易度が「HIGH」の問題を検索
+    high_difficulty_questions = tag_manager.get_questions_by_difficulty("HIGH")
+    
+    # 複数タグでの検索
+    law_calc_questions = tag_manager.get_questions_by_multiple_tags({
+        "category": "law", 
+        "problem_type": "calc"
+    })
+```
+
+## 分析ツール
 
 ### エンベディング距離分析
-
-`embedding_analyzer.py`を使用して、エンベディング間の距離を計算し、可視化します。
 
 ```bash
 # エンベディングの分析
@@ -532,31 +397,124 @@ python src/embedding_analyzer.py --input data/embedding/令和5年度_page_046_e
 
 ### 類似/非類似問題の比較
 
-`compare_samples.py`を使用して、類似問題と非類似問題を視覚的に比較します。
-
 ```bash
 # 比較レポートを作成
 python src/compare_samples.py --input data/embedding/samples/sample_files.json --output data/embedding/comparison
 ```
 
-これにより、指定された問題に対して類似度が高い問題と低い問題を比較したレポートが生成されます。
-レポートには問題の画像とマークダウンテキストが含まれます。
-
 ### エンベディング類似度の比較
-
-`compare_similarity.py`を使用して、複数のエンベディング間の類似度を比較します。
 
 ```bash
 # 類似度比較を実行
 python src/compare_similarity.py --input data/embedding --output data/similarity_report
 ```
 
+## ディレクトリ構造
+
+```
+.
+├── README.md                     # プロジェクト概要
+├── SETUP.md                      # 詳細セットアップガイド
+├── run_pipeline.sh               # パイプライン実行スクリプト
+├── extract_sample.sh             # サンプルページ抽出スクリプト
+├── requirements.txt              # Pythonパッケージ依存関係
+├── .env                          # 環境変数（非公開）
+├── .env.sample                   # 環境変数サンプル
+├── ocr_pipeline_flow.md          # パイプラインフロー図解
+├── ocr_future_plans.md           # 今後の開発計画
+├── ocr_progress_report.md        # 進捗レポート
+├── ocr_demo_results.md           # デモ結果報告
+├── multimodal_embedding_issue.md # エンベディング問題報告
+├── infra-todo.md                 # インフラ関連Todo
+├── IMPROVEMENTS.md               # 改善提案書
+├── src/                          # ソースコード
+│   ├── pdf_to_images.py          # [1] PDF→画像変換
+│   ├── ocr_engine.py             # [2] OCR処理
+│   ├── ocr_to_markdown.py        # [3] Markdown変換
+│   ├── markdown_importer.py      # [4] DB登録
+│   ├── claude_image_analyzer.py  # [5a] Claude画像解析
+│   ├── gemini_image_analyzer.py  # [5b] Gemini画像解析
+│   ├── generate_embedding.py     # [6] エンベディング生成
+│   ├── embed_importer.py         # [7] DB格納
+│   ├── pdf2md_claude.py          # Claude PDF→MD変換
+│   ├── pdf2md_gemini.py          # Gemini PDF→MD変換
+│   ├── extract_sample_pages.py   # サンプルページ抽出
+│   ├── embedding_analyzer.py     # エンベディング分析
+│   ├── compare_samples.py        # 類似問題比較
+│   ├── compare_similarity.py     # 類似度比較
+│   ├── db_utils.py               # DB操作ユーティリティ
+│   ├── tag_manager.py            # タグ管理
+│   ├── json_to_db.py             # JSON→DB変換
+│   ├── extract_frequently_asked.ts # 頻出問題抽出
+│   ├── frequently_asked_service.ts # 頻出問題サービス
+│   ├── utils/                    # ユーティリティ関数
+│   ├── input/                    # 入力ファイル
+│   └── output/                   # 出力ファイル
+├── app/                          # FastAPIアプリケーション
+│   ├── main.py                   # アプリエントリポイント
+│   ├── models/                   # データモデル
+│   ├── routes/                   # APIルート
+│   ├── services/                 # サービスロジック
+│   └── utils/                    # ユーティリティ
+├── data/                         # データファイル
+│   ├── pdf/                      # PDFファイル
+│   ├── images/                   # 画像ファイル
+│   ├── ocr/                      # OCRテキスト
+│   ├── markdown/                 # Markdownファイル
+│   ├── embedding/                # エンベディング
+│   ├── claude/                   # Claude API結果
+│   └── gemini/                   # Gemini API結果
+├── db/                           # データベース関連
+│   ├── README.md                 # データベース説明
+│   ├── TAGS_README.md            # タグシステム説明
+│   ├── tags_schema.sql           # タグシステムスキーマ
+│   └── backups/                  # バックアップ
+├── prisma/                       # Prisma ORM定義
+├── client_samples/               # クライアントサンプル
+└── samples/                      # サンプルデータ
+```
+
+## トラブルシューティング
+
+詳細なトラブルシューティング情報は`SETUP.md`を参照してください。主な問題と解決策：
+
+### 一般的な問題
+
+- **ModuleNotFoundError**: 必要なパッケージのインストール確認
+  ```bash
+  pip install -r requirements.txt
+  ```
+
+- **環境変数エラー**: .envファイルの確認
+  ```bash
+  cp .env.sample .env  # コピーして編集
+  ```
+
+### OS別の問題
+
+**macOS**:
+- Popplerが見つからない場合: `brew reinstall poppler`
+- 日本語フォント問題: `fc-list | grep -i japan`で確認
+
+**Linux**:
+- Tesseract日本語モデル: `sudo apt install -y tesseract-ocr-jpn`
+- PostgreSQL接続問題: `sudo systemctl status postgresql`
+
+**Windows**:
+- パス設定問題: システム環境変数のPathを確認
+- PostgreSQLサービス: サービスから手動起動
+
+### API関連の問題
+
+- APIキーエラー: キーの有効性と使用量制限を確認
+- API応答遅延: タイムアウト設定の調整
+- レート制限: APIサービスのダッシュボードで確認
+
 ## 参考リンク
 
-- [try-vertex-ai-multimodal-search (zenn.dev)](https://zenn.dev/longrun_jp/articles/try-vertex-ai-multimodal-search)  
+- [try-vertex-ai-multimodal-search (zenn.dev)](https://zenn.dev/longrun_jp/articles/try-vertex-ai-multimodal-search)
 - [pgvector GitHub](https://github.com/pgvector/pgvector)
-
-## ライセンス
-
-このプロジェクトはMITライセンスの下で公開されています。
->>>>>>> 36d0997b50c1e16ac7b84ba207fa5b0cb29bf84f
+- [FastAPI 公式ドキュメント](https://fastapi.tiangolo.com/)
+- [AWS Cognito 開発者ガイド](https://docs.aws.amazon.com/cognito/latest/developerguide/)
+- [Gemini API ドキュメント](https://ai.google.dev/docs)
+- [Claude API ドキュメント](https://docs.anthropic.com/claude/reference/getting-started-with-the-api)
